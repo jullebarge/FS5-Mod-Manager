@@ -1,0 +1,1558 @@
+const {
+    app,
+    BrowserWindow,
+    ipcMain,
+	shell
+} = require('electron');
+const path = require('path');
+const fs = require('fs');
+const AdmZip = require('adm-zip');
+const os = require('os');
+const crypto = require('crypto');
+const {
+    execFile
+} = require('child_process');
+const https = require('https');
+
+const basePath = "C:/Users/Julien/Documents/My Games/FarmingSimulator2025";
+const modsCartesPath = path.join(basePath, "modsCartes");
+const conversionLocks = new Map();
+
+function parseIconFilename(xml) {
+    const match = xml.match(/<iconFilename>(.*?)<\/iconFilename>/);
+    return match ? match[1] : null;
+}
+
+function getIconPath() {
+    if (!app.isPackaged) {
+        return path.join(app.getAppPath(), 'src', 'assets', 'icon.ico');
+    }
+
+    return path.join(process.resourcesPath, 'assets', 'icon.ico');
+}
+
+function parseModTitle(xml, fileName) {
+    let name = fileName;
+
+    const titleBlockMatch = xml.match(/<title>([\s\S]*?)<\/title>/);
+
+    if (titleBlockMatch) {
+        const titleBlock = titleBlockMatch[1];
+
+        const frMatch = titleBlock.match(/<fr>(.*?)<\/fr>/);
+        const enMatch = titleBlock.match(/<en>(.*?)<\/en>/);
+        const simpleMatch = titleBlock.match(/^\s*([^<]+)\s*$/);
+
+        if (frMatch) {
+            name = frMatch[1];
+        } else if (enMatch) {
+            name = enMatch[1];
+        } else if (simpleMatch) {
+            name = simpleMatch[1];
+        }
+    }
+
+    return name;
+}
+
+function parseModVersion(xml) {
+    const versionMatch = xml.match(/<version>([^<]+)<\/version>/);
+    return versionMatch ? versionMatch[1] : "?";
+}
+
+function parseModAuthor(xml) {
+    const authorMatch = xml.match(/<author>(.*?)<\/author>/);
+    return authorMatch ? authorMatch[1] : "?";
+}
+
+function getModsFolder(profileName) {
+    if (!profileName || profileName === "Default" || profileName === "...") {
+        return path.join(basePath, "mods");
+    }
+
+    return path.join(modsCartesPath, profileName);
+}
+
+function getTexconvPath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "texconv.exe");
+  } else {
+    return path.join(app.getAppPath(), 'assets', 'texconv.exe');
+  }
+}
+
+function getIconCacheDir() {
+    const dir = path.join(app.getPath('userData'), 'icon-cache');
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, {
+            recursive: true
+        });
+    }
+    return dir;
+}
+
+function makeIconCacheName(modFilePath, ddsEntryName) {
+    const fileName = path.basename(modFilePath);
+    const key = `${fileName}|${ddsEntryName}|256`;
+
+    const hash = crypto
+        .createHash('md5')
+        .update(key)
+        .digest('hex');
+
+    return `${hash}.png`;
+}
+
+function getActiveProfileFromXML() {
+    const gameSettingsPath = "C:\\Users\\Julien\\Documents\\My Games\\FarmingSimulator2025\\gameSettings.xml";
+
+    if (!fs.existsSync(gameSettingsPath)) {
+        return "Default";
+    }
+
+    const xml = fs.readFileSync(gameSettingsPath, "utf-8");
+
+    const activeMatch = xml.match(/modsDirectoryOverride active="(true|false)"/);
+
+    if (!activeMatch || activeMatch[1] === "false") {
+        return "Default";
+    }
+
+    const dirMatch = xml.match(/directory="([^"]+)"/);
+
+    if (!dirMatch) {
+        return "Default";
+    }
+
+    const fullPath = dirMatch[1];
+
+    // 🔥 récupère juste le nom du dossier
+    const normalizedPath = fullPath.replace(/[\\/]+$/, '');
+    const profileName = path.basename(normalizedPath);
+
+    return profileName;
+}
+
+async function convertDdsToPngWithTexconv(ddsBuffer, modFilePath, ddsEntryName) {
+    try {
+        const texconvPath = getTexconvPath();
+		//console.log("texconv path =", texconvPath);
+		
+        if (!fs.existsSync(texconvPath)) {
+            //console.error("texconv.exe introuvable :", texconvPath);
+            return null;
+        }
+
+        const cacheDir = getIconCacheDir();
+        const cacheFileName = makeIconCacheName(modFilePath, ddsEntryName);
+        const finalPngPath = path.join(cacheDir, cacheFileName);
+
+        // 1. Cache disque deja present
+        if (fs.existsSync(finalPngPath)) {
+            const buffer = fs.readFileSync(finalPngPath);
+            return `data:image/png;base64,${buffer.toString('base64')}`;
+        }
+
+        // 2. Si une conversion est deja en cours pour cette image, on attend son resultat
+        if (conversionLocks.has(finalPngPath)) {
+            return await conversionLocks.get(finalPngPath);
+        }
+
+        // 3. On cree une promesse de conversion unique
+        const conversionPromise = (async() => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fs25dds-'));
+            const uniqueId = crypto.randomBytes(6).toString('hex');
+
+            const ddsPath = path.join(tempDir, `source_${uniqueId}.dds`);
+            const tempPngPath = path.join(cacheDir, `source_${uniqueId}.png`);
+
+            try {
+                fs.writeFileSync(ddsPath, ddsBuffer);
+
+                await new Promise((resolve, reject) => {
+                    execFile(
+                        texconvPath,
+                        [
+                            '-ft', 'png',
+                            '-f', 'R8G8B8A8_UNORM_SRGB',
+                            '-srgb',
+                            '-w', '256',
+                            '-h', '256',
+                            '-y',
+                            '-o', cacheDir,
+                            ddsPath
+                        ], {
+                        windowsHide: true
+                    },
+                        (error) => {
+                        if (error)
+                            reject(error);
+                        else
+                            resolve();
+                    });
+                });
+
+                if (!fs.existsSync(tempPngPath)) {
+                    console.error("PNG non genere :", tempPngPath);
+                    return null;
+                }
+
+                // 4. Copie vers le cache final (plus fiable que rename)
+                fs.copyFileSync(tempPngPath, finalPngPath);
+
+                const buffer = fs.readFileSync(finalPngPath);
+                return `data:image/png;base64,${buffer.toString('base64')}`;
+            } catch (err) {
+                console.error("Erreur conversion texconv :", err);
+                return null;
+            } finally {
+                // nettoyage
+                try {
+                    if (fs.existsSync(tempPngPath))
+                        fs.unlinkSync(tempPngPath);
+                } catch {}
+
+                try {
+                    if (fs.existsSync(ddsPath))
+                        fs.unlinkSync(ddsPath);
+                } catch {}
+
+                try {
+                    if (fs.existsSync(tempDir))
+                        fs.rmSync(tempDir, {
+                            recursive: true,
+                            force: true
+                        });
+                } catch {}
+            }
+        })();
+
+        // 5. On pose le lock avant de lancer reellement
+        conversionLocks.set(finalPngPath, conversionPromise);
+
+        const result = await conversionPromise;
+
+        // 6. On retire le lock une fois termine
+        conversionLocks.delete(finalPngPath);
+
+        return result;
+    } catch (err) {
+        console.error("Erreur conversion texconv :", err);
+        return null;
+    }
+}
+
+function getManagedLinksFile(profile) {
+  return path.join(getModsFolder(profile), ".managed_links.json");
+}
+
+function readManagedLinks(profile) {
+  try {
+    const file = getManagedLinksFile(profile);
+    if (!fs.existsSync(file)) return [];
+
+    const raw = fs.readFileSync(file, "utf-8");
+    const data = JSON.parse(raw);
+
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeManagedLinks(profile, links) {
+  const file = getManagedLinksFile(profile);
+  fs.writeFileSync(file, JSON.stringify(links, null, 2), "utf-8");
+}
+
+function parseGitHubRepoUrl(repoUrl) {
+    const cleanUrl = (repoUrl || "").trim();
+
+    const match = cleanUrl.match(/^https:\/\/github\.com\/([^\/]+)\/([^\/?#]+?)(?:\.git)?(?:\/|$)/i);
+
+    if (!match) {
+        throw new Error("URL GitHub invalide. Format attendu : https://github.com/owner/repo");
+    }
+
+    return {
+        owner: match[1],
+        repo: match[2]
+    };
+}
+
+function githubRequestJson(url) {
+    return new Promise((resolve, reject) => {
+        const req = https.get(url, {
+            headers: {
+                "User-Agent": "FS25-Mod-Manager",
+                "Accept": "application/vnd.github+json"
+            }
+        }, (res) => {
+            let data = "";
+
+            res.on("data", (chunk) => {
+                data += chunk;
+            });
+
+            res.on("end", () => {
+                try {
+                    if (res.statusCode && res.statusCode >= 400) {
+                        let message = `Erreur GitHub (${res.statusCode})`;
+
+                        try {
+                            const parsed = JSON.parse(data);
+                            if (parsed && parsed.message) {
+                                message = `Erreur GitHub : ${parsed.message}`;
+                            }
+                        } catch {}
+
+                        reject(new Error(message));
+                        return;
+                    }
+
+                    resolve(JSON.parse(data));
+                } catch (err) {
+                    reject(err);
+                }
+            });
+        });
+
+        req.on("error", reject);
+    });
+}
+
+async function fetchLatestGitHubRelease(owner, repo) {
+    const url = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
+    return await githubRequestJson(url);
+}
+
+async function fetchGitHubReleases(owner, repo) {
+    const url = `https://api.github.com/repos/${owner}/${repo}/releases`;
+    return await githubRequestJson(url);
+}
+
+async function fetchGitHubReleaseForInstall(owner, repo, includePrereleases) {
+    if (!includePrereleases) {
+        return await fetchLatestGitHubRelease(owner, repo);
+    }
+
+    const releases = await fetchGitHubReleases(owner, repo);
+    const release = Array.isArray(releases)
+        ? releases.find((r) => r && !r.draft)
+        : null;
+
+    if (!release) {
+        throw new Error("Aucune release exploitable trouvee sur ce depot");
+    }
+
+    return release;
+}
+
+function isProbablySourceZip(assetName) {
+    const name = (assetName || "").toLowerCase();
+
+    return (
+        name.includes("source") ||
+        name.includes("sources") ||
+        name.includes("-src") ||
+        name.includes("_src") ||
+        name.endsWith(".src.zip")
+    );
+}
+
+function selectGithubModAsset(release) {
+    if (!release || !Array.isArray(release.assets) || release.assets.length === 0) {
+        throw new Error("Cette release ne contient aucun asset");
+    }
+
+    const zipAssets = release.assets.filter((asset) =>
+        asset &&
+        asset.name &&
+        asset.browser_download_url &&
+        asset.name.toLowerCase().endsWith(".zip")
+    );
+
+    if (zipAssets.length === 0) {
+        throw new Error("Aucun fichier ZIP trouve dans la release");
+    }
+
+    const nonSourceZipAssets = zipAssets.filter((asset) => !isProbablySourceZip(asset.name));
+
+    if (nonSourceZipAssets.length === 1) {
+        return nonSourceZipAssets[0];
+    }
+
+    if (nonSourceZipAssets.length > 1) {
+        const fs25ZipAssets = nonSourceZipAssets.filter((asset) =>
+            /^fs25_.*\.zip$/i.test(asset.name)
+        );
+
+        if (fs25ZipAssets.length === 1) {
+            return fs25ZipAssets[0];
+        }
+
+        throw new Error("Plusieurs ZIP valides ont ete trouves dans la release");
+    }
+
+    if (zipAssets.length === 1) {
+        return zipAssets[0];
+    }
+
+    const fs25ZipAssets = zipAssets.filter((asset) =>
+        /^fs25_.*\.zip$/i.test(asset.name)
+    );
+
+    if (fs25ZipAssets.length === 1) {
+        return fs25ZipAssets[0];
+    }
+
+    throw new Error("Impossible de determiner automatiquement quel ZIP correspond au mod");
+}
+
+function getGithubRegistryPath() {
+    const dir = app.getPath("userData");
+
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+
+    return path.join(dir, "github-mods.json");
+}
+
+function readGithubRegistry() {
+    try {
+        const file = getGithubRegistryPath();
+
+        if (!fs.existsSync(file)) {
+            return [];
+        }
+
+        const raw = fs.readFileSync(file, "utf-8");
+        const data = JSON.parse(raw);
+
+        return Array.isArray(data) ? data : [];
+    } catch {
+        return [];
+    }
+}
+
+function writeGithubRegistry(data) {
+    const file = getGithubRegistryPath();
+    fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
+}
+
+function sameFileName(a, b) {
+    return String(a || "").toLowerCase() === String(b || "").toLowerCase();
+}
+
+function upsertGithubRegistryEntry(entry) {
+    const registry = readGithubRegistry();
+
+    const index = registry.findIndex(
+        (item) => item.profile === entry.profile && sameFileName(item.fileName, entry.fileName)
+    );
+
+    if (index >= 0) {
+        registry[index] = {
+            ...registry[index],
+            ...entry
+        };
+    } else {
+        registry.push(entry);
+    }
+
+    writeGithubRegistry(registry);
+}
+
+function removeGithubRegistryEntry(profile, fileName) {
+    const registry = readGithubRegistry().filter(
+        (item) => !(item.profile === profile && sameFileName(item.fileName, fileName))
+    );
+
+    writeGithubRegistry(registry);
+}
+
+function findTrackedGithubEntryForDisplayedMod(displayedProfile, fileName) {
+    const registry = readGithubRegistry();
+
+    let entry = registry.find(
+        (item) => item.profile === displayedProfile && sameFileName(item.fileName, fileName)
+    );
+
+    if (entry) {
+        return entry;
+    }
+
+    if (displayedProfile !== "Default") {
+        entry = registry.find(
+            (item) => item.profile === "Default" && sameFileName(item.fileName, fileName)
+        );
+
+        if (entry) {
+            return entry;
+        }
+    }
+
+    return null;
+}
+
+function getTrackedEntryForDisplayedMod(registry, profile, fileName, status) {
+    if (profile === "Default" || status === "local") {
+        return registry.find(
+            (item) => item.profile === profile && sameFileName(item.fileName, fileName)
+        ) || null;
+    }
+
+    if (status === "common-linked" || status === "common-excluded") {
+        return registry.find(
+            (item) => item.profile === "Default" && sameFileName(item.fileName, fileName)
+        ) || null;
+    }
+
+    return null;
+}
+
+function buildGithubMeta(entry) {
+    if (!entry) {
+        return null;
+    }
+
+    return {
+        tracked: true,
+        repoUrl: entry.repoUrl,
+        repo: `${entry.owner}/${entry.repo}`,
+        includePrereleases: !!entry.includePrereleases,
+        updateAvailable: !!entry.updateAvailable,
+        lastCheckedAt: entry.lastCheckedAt || null,
+        lastError: entry.lastError || null,
+        installedReleaseTag: entry.installedReleaseTag || null,
+        latestReleaseTag: entry.latestReleaseTag || null
+    };
+}
+
+function getTrackedEntriesForProfile(profile) {
+    const registry = readGithubRegistry();
+
+    if (profile === "Default") {
+        return registry.filter((item) => item.profile === "Default");
+    }
+
+    const managedLinks = readManagedLinks(profile);
+
+    return registry.filter(
+        (item) =>
+            item.profile === profile ||
+            (item.profile === "Default" && managedLinks.includes(item.fileName))
+    );
+}
+
+function parseGitHubRepoUrl(repoUrl) {
+    const cleanUrl = (repoUrl || "").trim();
+
+    const match = cleanUrl.match(/^https:\/\/github\.com\/([^\/]+)\/([^\/?#]+?)(?:\.git)?(?:\/|$)/i);
+
+    if (!match) {
+        throw new Error("URL GitHub invalide. Format attendu : https://github.com/owner/repo");
+    }
+
+    return {
+        owner: match[1],
+        repo: match[2]
+    };
+}
+
+function githubRequestJson(url) {
+    return new Promise((resolve, reject) => {
+        const req = https.get(url, {
+            headers: {
+                "User-Agent": "FS25-Mod-Manager",
+                "Accept": "application/vnd.github+json"
+            }
+        }, (res) => {
+            let data = "";
+
+            res.on("data", (chunk) => {
+                data += chunk;
+            });
+
+            res.on("end", () => {
+                try {
+                    if (res.statusCode && res.statusCode >= 400) {
+                        let message = `Erreur GitHub (${res.statusCode})`;
+
+                        try {
+                            const parsed = JSON.parse(data);
+                            if (parsed && parsed.message) {
+                                message = `Erreur GitHub : ${parsed.message}`;
+                            }
+                        } catch {}
+
+                        reject(new Error(message));
+                        return;
+                    }
+
+                    resolve(JSON.parse(data));
+                } catch (err) {
+                    reject(err);
+                }
+            });
+        });
+
+        req.on("error", reject);
+    });
+}
+
+async function fetchLatestGitHubRelease(owner, repo) {
+    const url = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
+    return await githubRequestJson(url);
+}
+
+function isProbablySourceZip(assetName) {
+    const name = (assetName || "").toLowerCase();
+
+    return (
+        name.includes("source") ||
+        name.includes("sources") ||
+        name.includes("src") ||
+        name.includes("dev") ||
+        name.includes("debug")
+    );
+}
+
+function selectGithubModAsset(release) {
+    if (!release || !Array.isArray(release.assets) || release.assets.length === 0) {
+        throw new Error("Cette release ne contient aucun asset");
+    }
+
+    const zipAssets = release.assets.filter((asset) =>
+        asset &&
+        asset.name &&
+        asset.browser_download_url &&
+        asset.name.toLowerCase().endsWith(".zip")
+    );
+
+    if (zipAssets.length === 0) {
+        throw new Error("Aucun fichier ZIP trouvé dans la derniere release");
+    }
+
+    const nonSourceZipAssets = zipAssets.filter((asset) => !isProbablySourceZip(asset.name));
+
+    if (nonSourceZipAssets.length === 1) {
+        return nonSourceZipAssets[0];
+    }
+
+    if (nonSourceZipAssets.length > 1) {
+        const fs25ZipAssets = nonSourceZipAssets.filter((asset) =>
+            /^fs25_.*\.zip$/i.test(asset.name)
+        );
+
+        if (fs25ZipAssets.length === 1) {
+            return fs25ZipAssets[0];
+        }
+
+        throw new Error(
+            "Plusieurs ZIP valides ont ete trouves dans la release. Ajoute une selection manuelle dans une prochaine version."
+        );
+    }
+
+    if (zipAssets.length === 1) {
+        return zipAssets[0];
+    }
+
+    const fs25ZipAssets = zipAssets.filter((asset) =>
+        /^fs25_.*\.zip$/i.test(asset.name)
+    );
+
+    if (fs25ZipAssets.length === 1) {
+        return fs25ZipAssets[0];
+    }
+
+    throw new Error("Impossible de determiner automatiquement quel ZIP correspond au mod");
+}
+
+function downloadFile(url, destinationPath) {
+    return new Promise((resolve, reject) => {
+        const tempPath = destinationPath + ".download";
+
+        const request = https.get(url, {
+            headers: {
+                "User-Agent": "FS25-Mod-Manager",
+                "Accept": "application/octet-stream"
+            }
+        }, (response) => {
+            // redirection
+            if (
+                response.statusCode &&
+                response.statusCode >= 300 &&
+                response.statusCode < 400 &&
+                response.headers.location
+            ) {
+                response.resume();
+                downloadFile(response.headers.location, destinationPath)
+                    .then(resolve)
+                    .catch(reject);
+                return;
+            }
+
+            if (!response.statusCode || response.statusCode >= 400) {
+                reject(new Error(`Echec du telechargement (${response.statusCode || "?"})`));
+                return;
+            }
+
+            const fileStream = fs.createWriteStream(tempPath);
+
+            response.pipe(fileStream);
+
+            fileStream.on("finish", () => {
+                fileStream.close(() => {
+                    try {
+                        // verification minimale : le zip doit etre lisible
+                        const zip = new AdmZip(tempPath);
+                        const hasModDesc = !!zip.getEntry("modDesc.xml");
+
+                        if (!hasModDesc) {
+                            fs.rmSync(tempPath, { force: true });
+                            reject(new Error("Le fichier telecharge ne semble pas etre un mod FS valide (modDesc.xml introuvable)"));
+                            return;
+                        }
+
+                        if (fs.existsSync(destinationPath)) {
+							fs.rmSync(destinationPath, { force: true });
+						}
+
+						fs.renameSync(tempPath, destinationPath);
+						resolve();
+                    } catch (err) {
+                        try {
+                            fs.rmSync(tempPath, { force: true });
+                        } catch {}
+                        reject(new Error("Le fichier telecharge n'est pas un ZIP valide"));
+                    }
+                });
+            });
+
+            fileStream.on("error", (err) => {
+                try {
+                    fs.rmSync(tempPath, { force: true });
+                } catch {}
+                reject(err);
+            });
+        });
+
+        request.on("error", (err) => {
+            try {
+                fs.rmSync(tempPath, { force: true });
+            } catch {}
+            reject(err);
+        });
+    });
+}
+
+function createWindow() {
+    const iconPath = getIconPath();
+
+    //console.log("ICON PATH =", iconPath);
+    //console.log("ICON EXISTS =", fs.existsSync(iconPath));
+
+    const mainWindow = new BrowserWindow({
+        width: 1500,
+        height: 1200,
+        icon: fs.existsSync(iconPath) ? iconPath : undefined,
+        webPreferences: {
+            preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY
+        }
+    });
+
+	mainWindow.setMenu(null);
+    mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
+}
+
+app.whenReady().then(() => {
+    ipcMain.handle('fs25:getProfiles', async() => {
+        try {
+            return fs
+            .readdirSync(modsCartesPath)
+            .filter((name) => {
+                const fullPath = path.join(modsCartesPath, name);
+                return fs.statSync(fullPath).isDirectory();
+            });
+        } catch (err) {
+            console.error("Erreur lecture profils:", err);
+            return [];
+        }
+    });
+
+    ipcMain.handle('fs25:getActiveProfile', async() => {
+        const profile = getActiveProfileFromXML();
+        //console.log("ACTIVE PROFILE =", profile);
+        return profile;
+    });
+
+    ipcMain.handle('fs25:setActiveProfile', async(_event, profileName) => {
+        try {
+            const xmlPath = path.join(basePath, "gameSettings.xml");
+            let content = fs.readFileSync(xmlPath, 'utf-8');
+
+            if (profileName === "Default") {
+                content = content.replace(
+                        /<modsDirectoryOverride\s+active="[^"]*"\s+directory="[^"]*"\s*\/>/,
+                        '<modsDirectoryOverride active="false" directory="" />');
+            } else {
+                const profilePath = path.join(basePath, "modsCartes", profileName).replace(/\\/g, "/");
+
+                content = content.replace(
+                        /<modsDirectoryOverride\s+active="[^"]*"\s+directory="[^"]*"\s*\/>/,
+`<modsDirectoryOverride active="true" directory="${profilePath}" />`);
+            }
+
+            fs.writeFileSync(xmlPath, content, 'utf-8');
+            return {
+                success: true
+            };
+        } catch (err) {
+            console.error("Erreur changement profil actif:", err);
+            return {
+                success: false,
+                error: err.message
+            };
+        }
+    });
+
+    ipcMain.handle('fs25:createProfile', async(_event, profileName) => {
+        try {
+            const cleanName = (profileName || "").trim();
+
+            if (!cleanName) {
+                return {
+                    success: false,
+                    error: "Nom de profil vide"
+                };
+            }
+
+            const newPath = path.join(modsCartesPath, cleanName);
+
+            if (fs.existsSync(newPath)) {
+                return {
+                    success: false,
+                    error: "Le profil existe deja"
+                };
+            }
+
+            fs.mkdirSync(newPath);
+            return {
+                success: true
+            };
+        } catch (err) {
+            console.error("Erreur creation profil:", err);
+            return {
+                success: false,
+                error: err.message
+            };
+        }
+    });
+
+    ipcMain.handle('fs25:addGithubMod', async (_event, profile, repoUrl, includePrereleases = false) => {
+        try {
+            const targetProfile = (profile || "").trim();
+
+            if (!targetProfile) {
+                return { success: false, error: "Profil invalide" };
+            }
+
+            const targetFolder = getModsFolder(targetProfile);
+
+            if (!fs.existsSync(targetFolder)) {
+                return { success: false, error: "Dossier du profil introuvable" };
+            }
+
+            const { owner, repo } = parseGitHubRepoUrl(repoUrl);
+
+            const release = await fetchGitHubReleaseForInstall(owner, repo, includePrereleases);
+            const asset = selectGithubModAsset(release);
+
+            const destinationPath = path.join(targetFolder, asset.name);
+
+            if (fs.existsSync(destinationPath)) {
+                return {
+                    success: false,
+                    error: `Un fichier du meme nom existe deja dans le profil : ${asset.name}`
+                };
+            }
+
+            await downloadFile(asset.browser_download_url, destinationPath);
+
+            const now = new Date().toISOString();
+
+            upsertGithubRegistryEntry({
+                profile: targetProfile,
+                fileName: asset.name,
+                repoUrl: `https://github.com/${owner}/${repo}`,
+                owner,
+                repo,
+                includePrereleases: !!includePrereleases,
+                installedReleaseId: release.id,
+                installedReleaseTag: release.tag_name || release.name || "",
+                installedAssetId: asset.id,
+                installedAssetName: asset.name,
+                lastCheckedAt: now,
+                latestReleaseId: release.id,
+                latestReleaseTag: release.tag_name || release.name || "",
+                latestAssetId: asset.id,
+                latestAssetName: asset.name,
+                updateAvailable: false,
+                lastError: null
+            });
+
+            return {
+                success: true,
+                fileName: asset.name,
+                releaseName: release.name || release.tag_name || "release",
+                repo: `${owner}/${repo}`
+            };
+        } catch (err) {
+            console.error("Erreur addGithubMod:", err);
+            return {
+                success: false,
+                error: err.message
+            };
+        }
+    });
+
+    ipcMain.handle('fs25:checkGithubUpdates', async (_event, profile) => {
+        try {
+            const entries = getTrackedEntriesForProfile(profile);
+
+            if (entries.length === 0) {
+                return {
+                    success: true,
+                    checkedCount: 0,
+                    updateCount: 0,
+                    errorCount: 0
+                };
+            }
+
+            const registry = readGithubRegistry();
+            let checkedCount = 0;
+            let updateCount = 0;
+            let errorCount = 0;
+
+            for (const entry of entries) {
+                const index = registry.findIndex(
+                    (item) =>
+                        item.profile === entry.profile &&
+                        sameFileName(item.fileName, entry.fileName)
+                );
+
+                if (index < 0) {
+                    continue;
+                }
+
+                try {
+                    const release = await fetchGitHubReleaseForInstall(
+                        entry.owner,
+                        entry.repo,
+                        !!entry.includePrereleases
+                    );
+
+                    const asset = selectGithubModAsset(release);
+
+                    registry[index] = {
+                        ...registry[index],
+                        lastCheckedAt: new Date().toISOString(),
+                        latestReleaseId: release.id,
+                        latestReleaseTag: release.tag_name || release.name || "",
+                        latestAssetId: asset.id,
+                        latestAssetName: asset.name,
+                        updateAvailable:
+                            registry[index].installedReleaseId !== release.id ||
+                            registry[index].installedAssetId !== asset.id,
+                        lastError: null
+                    };
+
+                    checkedCount++;
+
+                    if (registry[index].updateAvailable) {
+                        updateCount++;
+                    }
+                } catch (err) {
+                    registry[index] = {
+                        ...registry[index],
+                        lastCheckedAt: new Date().toISOString(),
+                        lastError: err.message
+                    };
+
+                    checkedCount++;
+                    errorCount++;
+                }
+            }
+
+            writeGithubRegistry(registry);
+
+            return {
+                success: true,
+                checkedCount,
+                updateCount,
+                errorCount
+            };
+        } catch (err) {
+            console.error("Erreur checkGithubUpdates:", err);
+            return {
+                success: false,
+                error: err.message
+            };
+        }
+    });
+
+    ipcMain.handle('fs25:getMods', async (_event, profile) => {
+      try {
+        const folder = getModsFolder(profile);
+
+        if (!fs.existsSync(folder)) return [];
+
+        const files = fs.readdirSync(folder);
+        const registry = readGithubRegistry();
+
+        let excludedMods = [];
+        if (profile !== "Default") {
+          const excludeFile = path.join(folder, "exclude_mods.txt");
+
+          if (fs.existsSync(excludeFile)) {
+            excludedMods = fs.readFileSync(excludeFile, "utf-8")
+              .split("\n")
+              .map((l) => l.trim())
+              .filter(Boolean);
+          }
+        }
+
+        const managedLinks = profile === "Default" ? [] : readManagedLinks(profile);
+
+        const mods = files
+          .filter((f) => f.toLowerCase().endsWith(".zip"))
+          .map((file) => {
+            const fullPath = path.join(folder, file);
+
+            let name = file;
+            let version = "?";
+            let author = "?";
+
+            try {
+              const zip = new AdmZip(fullPath);
+              const xmlEntry = zip.getEntry("modDesc.xml");
+
+              if (xmlEntry) {
+                const xml = zip.readAsText(xmlEntry);
+
+                name = parseModTitle(xml, file);
+                version = parseModVersion(xml);
+                author = parseModAuthor(xml);
+              }
+            } catch (err) {
+              console.error("Erreur lecture mod:", file, err);
+            }
+
+            const isManagedCommon =
+              profile !== "Default" && managedLinks.includes(file);
+
+            const stats = fs.statSync(fullPath);
+
+            let status = "local";
+
+            if (profile === "Default") {
+              status = "local";
+            } else if (isManagedCommon) {
+              status = "common-linked";
+            } else {
+              status = "local";
+            }
+
+            const trackedEntry = getTrackedEntryForDisplayedMod(
+              registry,
+              profile,
+              file,
+              status
+            );
+
+            return {
+              fileName: file,
+              name,
+              version,
+              author,
+              icon: null,
+              size: stats.size,
+              isSymlink: isManagedCommon,
+              status,
+              fullPath,
+              github: buildGithubMeta(trackedEntry)
+            };
+          });
+
+        return mods;
+
+      } catch (err) {
+        console.error("Erreur getMods:", err);
+        return [];
+      }
+    });
+
+    ipcMain.handle('fs25:getModIcon', async(_event, mod) => {
+        try {
+            const fullPath = mod.fullPath;
+
+            const zip = new AdmZip(fullPath);
+            const xmlEntry = zip.getEntry("modDesc.xml");
+
+            if (!xmlEntry)
+                return null;
+
+            const xml = zip.readAsText(xmlEntry);
+            const iconFile = parseIconFilename(xml);
+
+            if (!iconFile)
+                return null;
+
+            const baseName = iconFile.replace(/\.[^/.]+$/, "");
+
+            let entry = zip.getEntry(baseName + ".dds");
+
+            if (!entry) {
+                entry = zip.getEntry(iconFile);
+            }
+
+            if (!entry) {
+                entry = zip.getEntries().find(e =>
+                        !e.isDirectory &&
+                        e.entryName.toLowerCase().endsWith(baseName.toLowerCase() + ".dds"));
+            }
+
+            if (!entry)
+                return null;
+
+            const ddsBuffer = entry.getData();
+
+            return await convertDdsToPngWithTexconv(
+                ddsBuffer,
+                fullPath,
+                entry.entryName);
+
+        } catch (err) {
+            console.error("Erreur getModIcon:", err);
+            return null;
+        }
+    });
+
+	ipcMain.handle('fs25:getExcludedMods', async (_event, profile) => {
+	  try {
+		if (!profile || profile === "Default" || profile === "...") {
+		  return [];
+		}
+
+		const modsDir = getModsFolder(profile);
+		const excludeFile = path.join(modsDir, "exclude_mods.txt");
+
+		if (!fs.existsSync(excludeFile)) {
+		  return [];
+		}
+
+		return fs.readFileSync(excludeFile, "utf-8")
+		  .split("\n")
+		  .map((line) => line.trim())
+		  .filter(Boolean);
+	  } catch (err) {
+		console.error("Erreur getExcludedMods:", err);
+		return [];
+	  }
+	});
+
+	ipcMain.handle('fs25:repairLinks', async (_event, profile) => {
+	  try {
+		if (!profile || profile === "Default") {
+		  return { success: false, error: "Action impossible sur Default" };
+		}
+
+		const profileDir = getModsFolder(profile);
+		const defaultDir = getModsFolder("Default");
+		const excludeFile = path.join(profileDir, "exclude_mods.txt");
+
+		let excludedMods = [];
+		if (fs.existsSync(excludeFile)) {
+		  excludedMods = fs.readFileSync(excludeFile, "utf-8")
+			.split("\n")
+			.map((line) => line.trim())
+			.filter(Boolean);
+		}
+
+		if (!fs.existsSync(profileDir) || !fs.existsSync(defaultDir)) {
+		  return { success: false, error: "Dossier profil ou Default introuvable" };
+		}
+
+		// anciens liens gérés par l'app
+		const previousManaged = readManagedLinks(profile);
+
+		// 1. Supprimer les anciens hard links gérés
+		for (const file of previousManaged) {
+		  const targetPath = path.join(profileDir, file);
+		  try {
+			if (fs.existsSync(targetPath)) {
+			  fs.rmSync(targetPath, { force: true });
+			}
+		  } catch {}
+		}
+
+		// 2. Recréer les liens vers les communs non exclus
+		const defaultEntries = fs.readdirSync(defaultDir)
+		  .filter((file) => file.toLowerCase().endsWith(".zip"));
+
+		const newManaged = [];
+		let linkedCount = 0;
+		let skippedExcluded = 0;
+		let removedDuplicates = 0;
+
+		for (const file of defaultEntries) {
+		  if (excludedMods.includes(file)) {
+			skippedExcluded++;
+			continue;
+		  }
+
+		  const sourcePath = path.join(defaultDir, file);
+		  const targetPath = path.join(profileDir, file);
+
+		  if (fs.existsSync(targetPath)) {
+			// s'il y a deja un fichier local du meme nom, on le remplace
+			fs.rmSync(targetPath, { force: true });
+			removedDuplicates++;
+		  }
+
+		  // hard link (pas besoin d'admin, meme volume)
+		  fs.linkSync(sourcePath, targetPath);
+
+		  newManaged.push(file);
+		  linkedCount++;
+		}
+
+		writeManagedLinks(profile, newManaged);
+
+		return {
+		  success: true,
+		  linkedCount,
+		  skippedExcluded,
+		  removedDuplicates
+		};
+	  } catch (err) {
+		console.error("Erreur repairLinks:", err);
+		return { success: false, error: err.message };
+	  }
+	});
+
+	ipcMain.handle('fs25:removeLinks', async (_event, profile) => {
+	  try {
+		if (!profile || profile === "Default") {
+		  return { success: false, error: "Action impossible sur Default" };
+		}
+
+		const profileDir = getModsFolder(profile);
+
+		if (!fs.existsSync(profileDir)) {
+		  return { success: false, error: "Dossier profil introuvable" };
+		}
+
+		const managed = readManagedLinks(profile);
+		let removedCount = 0;
+
+		for (const file of managed) {
+		  const fullPath = path.join(profileDir, file);
+		  try {
+			if (fs.existsSync(fullPath)) {
+			  fs.rmSync(fullPath, { force: true });
+			  removedCount++;
+			}
+		  } catch {}
+		}
+
+		writeManagedLinks(profile, []);
+
+		return { success: true, removedCount };
+	  } catch (err) {
+		console.error("Erreur removeLinks:", err);
+		return { success: false, error: err.message };
+	  }
+	});
+		
+	ipcMain.handle('fs25:openProfileFolder', async (_event, profile) => {
+	  try {
+		const folder = getModsFolder(profile);
+
+		if (!fs.existsSync(folder)) {
+		  return { success: false, error: "Dossier introuvable" };
+		}
+
+		await shell.openPath(folder);
+		return { success: true };
+	  } catch (err) {
+		console.error("Erreur openProfileFolder:", err);
+		return { success: false, error: err.message };
+	  }
+	});
+
+	ipcMain.handle('fs25:toggleExcludedMod', async (_event, profile, fileName) => {
+	  try {
+		if (!profile || profile === "Default") {
+		  return { success: false, error: "Action impossible sur Default" };
+		}
+
+		const profileDir = getModsFolder(profile);
+		const defaultDir = getModsFolder("Default");
+		const excludeFile = path.join(profileDir, "exclude_mods.txt");
+		const sourcePath = path.join(defaultDir, fileName);
+		const targetPath = path.join(profileDir, fileName);
+
+		let excludedMods = [];
+		if (fs.existsSync(excludeFile)) {
+		  excludedMods = fs.readFileSync(excludeFile, "utf-8")
+			.split("\n")
+			.map((line) => line.trim())
+			.filter(Boolean);
+		}
+
+		let managedLinks = readManagedLinks(profile);
+
+		const isExcluded = excludedMods.includes(fileName);
+
+		if (!isExcluded) {
+		  // 🔥 EXCLURE
+		  excludedMods.push(fileName);
+		  excludedMods = [...new Set(excludedMods)];
+
+		  // retirer le hard link s'il est géré par l'app
+		  if (managedLinks.includes(fileName) && fs.existsSync(targetPath)) {
+			fs.rmSync(targetPath, { force: true });
+		  }
+
+		  managedLinks = managedLinks.filter((m) => m !== fileName);
+
+		  fs.writeFileSync(excludeFile, excludedMods.join("\n"), "utf-8");
+		  writeManagedLinks(profile, managedLinks);
+
+		  return {
+			success: true,
+			excluded: true
+		  };
+		} else {
+		  // 🔥 REINTEGRER
+		  excludedMods = excludedMods.filter((m) => m !== fileName);
+
+		  if (!fs.existsSync(sourcePath)) {
+			return { success: false, error: "Mod favori introuvable dans Default" };
+		  }
+
+		  // s'il n'existe pas deja dans le profil, on recrée le hard link
+		  if (!fs.existsSync(targetPath)) {
+			fs.linkSync(sourcePath, targetPath);
+		  }
+
+		  if (!managedLinks.includes(fileName)) {
+			managedLinks.push(fileName);
+		  }
+
+		  fs.writeFileSync(excludeFile, excludedMods.join("\n"), "utf-8");
+		  writeManagedLinks(profile, managedLinks);
+
+		  return {
+			success: true,
+			excluded: false
+		  };
+		}
+	  } catch (err) {
+		console.error("Erreur toggleExcludedMod:", err);
+		return { success: false, error: err.message };
+	  }
+});
+
+	ipcMain.handle('fs25:promoteToCommon', async (_event, profile, fileName) => {
+	  try {
+		if (!profile || profile === "Default") {
+		  return { success: false, error: "Action impossible sur Default" };
+		}
+
+		const profileDir = getModsFolder(profile);
+		const defaultDir = getModsFolder("Default");
+
+		const sourcePath = path.join(profileDir, fileName);
+		const targetPath = path.join(defaultDir, fileName);
+		const linkPath = path.join(profileDir, fileName);
+
+		if (!fs.existsSync(sourcePath)) {
+		  return { success: false, error: "Mod local introuvable" };
+		}
+
+		// ⚠️ éviter d’écraser un mod existant dans Default
+		if (fs.existsSync(targetPath)) {
+		  return { success: false, error: "Un mod du même nom existe déjà dans les favoris" };
+		}
+
+		// 1. déplacer vers Default
+		fs.renameSync(sourcePath, targetPath);
+
+		// 2. recréer un hard link dans le profil
+		fs.linkSync(targetPath, linkPath);
+
+		// 3. enregistrer dans managed_links
+		let managed = readManagedLinks(profile);
+		if (!managed.includes(fileName)) {
+		  managed.push(fileName);
+		  writeManagedLinks(profile, managed);
+		}
+        const registry = readGithubRegistry();
+        const trackedEntry = registry.find(
+          (item) => item.profile === profile && sameFileName(item.fileName, fileName)
+        );
+
+        if (trackedEntry) {
+          trackedEntry.profile = "Default";
+          writeGithubRegistry(registry);
+        }
+		return { success: true };
+
+	  } catch (err) {
+		console.error("Erreur promoteToCommon:", err);
+		return { success: false, error: err.message };
+	  }
+	});
+
+	ipcMain.handle('fs25:deleteLocalMod', async (_event, profile, fileName) => {
+	  try {
+		const profileDir = getModsFolder(profile);
+		const filePath = path.join(profileDir, fileName);
+
+		if (!fs.existsSync(filePath)) {
+		  return { success: false, error: "Fichier introuvable" };
+		}
+
+		fs.rmSync(filePath, { force: true });
+		removeGithubRegistryEntry(profile, fileName);
+		 
+		return { success: true };
+
+	  } catch (err) {
+		console.error("Erreur deleteLocalMod:", err);
+		return { success: false, error: err.message };
+	  }
+	});
+
+	ipcMain.handle("app:getVersion", () => {
+	  return app.getVersion();
+	});
+	
+    ipcMain.handle('fs25:openGithubRepo', async (_event, repoUrl) => {
+        try {
+            const url = String(repoUrl || "").trim();
+
+            if (!/^https:\/\/github\.com\/[^\/]+\/[^\/]+/i.test(url)) {
+                return { success: false, error: "URL GitHub invalide" };
+            }
+
+            await shell.openExternal(url);
+            return { success: true };
+        } catch (err) {
+            console.error("Erreur openGithubRepo:", err);
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('fs25:updateGithubMod', async (_event, displayedProfile, fileName) => {
+        try {
+            const entry = findTrackedGithubEntryForDisplayedMod(displayedProfile, fileName);
+
+            if (!entry) {
+                return { success: false, error: "Ce mod n'est pas suivi par GitHub" };
+            }
+
+            const targetProfile = entry.profile;
+            const targetFolder = getModsFolder(targetProfile);
+
+            if (!fs.existsSync(targetFolder)) {
+                return { success: false, error: "Dossier cible introuvable" };
+            }
+
+            const currentFilePath = path.join(targetFolder, entry.fileName);
+
+            if (!fs.existsSync(currentFilePath)) {
+                return {
+                    success: false,
+                    error: `Le fichier local est introuvable dans le profil ${targetProfile}`
+                };
+            }
+
+            const release = await fetchGitHubReleaseForInstall(
+                entry.owner,
+                entry.repo,
+                !!entry.includePrereleases
+            );
+
+            const asset = selectGithubModAsset(release);
+            const destinationPath = path.join(targetFolder, asset.name);
+
+            await downloadFile(asset.browser_download_url, destinationPath);
+
+            if (!sameFileName(entry.fileName, asset.name) && fs.existsSync(currentFilePath)) {
+                fs.rmSync(currentFilePath, { force: true });
+            }
+
+            const registry = readGithubRegistry();
+            const index = registry.findIndex(
+                (item) =>
+                    item.profile === entry.profile &&
+                    sameFileName(item.fileName, entry.fileName)
+            );
+
+            if (index < 0) {
+                return { success: false, error: "Entrée GitHub introuvable dans le registre" };
+            }
+
+            registry[index] = {
+                ...registry[index],
+                fileName: asset.name,
+                installedReleaseId: release.id,
+                installedReleaseTag: release.tag_name || release.name || "",
+                installedAssetId: asset.id,
+                installedAssetName: asset.name,
+                latestReleaseId: release.id,
+                latestReleaseTag: release.tag_name || release.name || "",
+                latestAssetId: asset.id,
+                latestAssetName: asset.name,
+                lastCheckedAt: new Date().toISOString(),
+                updateAvailable: false,
+                lastError: null
+            };
+
+            writeGithubRegistry(registry);
+
+            return {
+                success: true,
+                fileName: asset.name,
+                repo: `${entry.owner}/${entry.repo}`,
+                targetProfile,
+                releaseName: release.name || release.tag_name || "release"
+            };
+        } catch (err) {
+            console.error("Erreur updateGithubMod:", err);
+            return {
+                success: false,
+                error: err.message
+            };
+        }
+    });
+
+	createWindow();
+
+    app.on('activate', () => {
+        if (BrowserWindow.getAllWindows().length === 0) {
+            createWindow();
+        }
+    });
+});
+
+app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+        app.quit();
+    }
+});
