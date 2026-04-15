@@ -21,5 +21,10 @@ contextBridge.exposeInMainWorld('fs25', {
   addGithubMod: (profile, repoUrl, includePrereleases) => ipcRenderer.invoke('fs25:addGithubMod', profile, repoUrl, includePrereleases),
   checkGithubUpdates: (profile) => ipcRenderer.invoke('fs25:checkGithubUpdates', profile),
   openGithubRepo: (repoUrl) => ipcRenderer.invoke('fs25:openGithubRepo', repoUrl),
-  updateGithubMod: (profile, fileName) => ipcRenderer.invoke('fs25:updateGithubMod', profile, fileName)
+  updateGithubMod: (profile, fileName) => ipcRenderer.invoke('fs25:updateGithubMod', profile, fileName),
+  launchGame: (playniteUrl) => ipcRenderer.invoke("fs25:launchGame", playniteUrl),
+  pickExternalZip: () => ipcRenderer.invoke("fs25:pickExternalZip"),
+  addExternalMod: (profile, zipPath, url) => ipcRenderer.invoke("fs25:addExternalMod", profile, zipPath, url),
+  openExternalUrl: (url) => ipcRenderer.invoke("fs25:openExternalUrl", url),
+  openModZip: (profile, fileName) => ipcRenderer.invoke("fs25:openModZip", profile, fileName)
 });

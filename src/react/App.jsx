@@ -10,6 +10,8 @@ const colors = {
   border: "#3a3a3a"
 };
 
+const PLAYNITE_URL = "playnite://playnite/start/11dd1871-0174-46f5-a27d-ef5d1095f121";
+
 function Spinner({ size = 40 }) {
   return (
     <svg
@@ -104,14 +106,14 @@ function StatCard({ label, value, icon, onClick, active, disabled }) {
 	);
 }
 
-function ActionButton({ children, onClick, style = {}, disabled }) {
+function ActionButton({ children, onClick, style = {}, disabled = false, title }) {
   const baseStyle = {
     background: colors.button,
     color: colors.buttonText,
     border: "none",
     fontWeight: 700,
     borderRadius: "8px",
-    padding: "10px 14px",
+    padding: "8px 12px",
     cursor: disabled ? "default" : "pointer",
     transition: "all 0.2s"
   };
@@ -129,6 +131,7 @@ function ActionButton({ children, onClick, style = {}, disabled }) {
     <button
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
+	  title={title}
       style={{
         ...baseStyle,
         ...style,
@@ -316,10 +319,20 @@ function MenuItem({ children, onClick }) {
   );
 }
 
-function ContextMenu({ menu, onClose, onPromote, onDelete }) {
+function ContextMenu({
+  menu,
+  onClose,
+  onPromote,
+  onDelete,
+  onToggleExcluded,
+  onOpenGithubRepo,
+  onUpdateGithubMod,
+  onOpenExternalUrl,
+  onOpenModZip
+}) {
   if (!menu) return null;
 
-  const { x, y, mod } = menu;
+  const { x, y, mod, selectedProfile  } = menu;
 
   return (
     <>
@@ -342,26 +355,94 @@ function ContextMenu({ menu, onClose, onPromote, onDelete }) {
           padding: "6px",
           boxShadow: "0 6px 20px rgba(0,0,0,0.5)",
           zIndex: 9999,
-          minWidth: "180px"
+          minWidth: "230px"
         }}
       >
-        <MenuItem
-          onClick={() => {
-            onPromote(mod);
-            onClose();
-          }}
-        >
-          📦 Passer en favori
-        </MenuItem>
+        {mod.status === "local" && selectedProfile !== "Default" && (
+          <MenuItem
+            onClick={() => {
+              onPromote(mod);
+              onClose();
+            }}
+          >
+            📦 Passer en favori
+          </MenuItem>
+        )}
+
+        {mod.status === "common-linked" && (
+          <MenuItem
+            onClick={() => {
+              onToggleExcluded(mod);
+              onClose();
+            }}
+          >
+            🚫 Exclure du profil
+          </MenuItem>
+        )}
+
+        {mod.status === "common-excluded" && (
+          <MenuItem
+            onClick={() => {
+              onToggleExcluded(mod);
+              onClose();
+            }}
+          >
+            ✅ Réintégrer dans le profil
+          </MenuItem>
+        )}
+
+        {mod.github?.repoUrl && (
+          <MenuItem
+            onClick={() => {
+              onOpenGithubRepo(mod);
+              onClose();
+            }}
+          >
+            🔗 Ouvrir le lien GitHub
+          </MenuItem>
+        )}
+
+        {mod.github?.updateAvailable && (
+          <MenuItem
+            onClick={() => {
+              onUpdateGithubMod(mod);
+              onClose();
+            }}
+          >
+            ⬆ Mettre à jour depuis GitHub
+          </MenuItem>
+        )}
+
+        {mod.external?.url && (
+          <MenuItem
+            onClick={() => {
+              onOpenExternalUrl(mod.external.url);
+              onClose();
+            }}
+          >
+            🌍 Ouvrir le lien externe
+          </MenuItem>
+        )}
 
         <MenuItem
           onClick={() => {
-            onDelete(mod);
+            onOpenModZip(mod);
             onClose();
           }}
         >
-          🗑 Supprimer
+          🗜 Ouvrir le zip
         </MenuItem>
+
+        {(mod.status === "local" || mod.status === "common-linked") && (
+          <MenuItem
+            onClick={() => {
+              onDelete(mod);
+              onClose();
+            }}
+          >
+            🗑 Supprimer
+          </MenuItem>
+        )}
       </div>
     </>
   );
@@ -370,17 +451,11 @@ function ContextMenu({ menu, onClose, onPromote, onDelete }) {
 function ModCard({
   mod,
   selectedProfile,
-  onToggleExcluded,
-  onCardClick,
-  onRemoveFavorite,
-  onOpenGithubRepo,
-  onUpdateGithubMod,
-  githubUpdatingKey
+  onCardClick
 }) {
   const [hover, setHover] = useState(false);
   const github = mod.github;
-  const updateKey = `${selectedProfile}::${mod.fileName}`;
-  const isUpdatingGithub = githubUpdatingKey === updateKey;
+  const external = mod.external;
 
   return (
     <div
@@ -390,7 +465,7 @@ function ModCard({
         borderRadius: "12px",
         width: "220px",
         overflow: "hidden",
-        cursor: "default",
+        cursor: "pointer",
         transition: "all 0.2s ease",
         transform: hover ? "scale(1.03)" : "scale(1)",
         boxShadow: hover ? "0 0 10px rgba(168,182,85,0.3)" : "none",
@@ -398,27 +473,10 @@ function ModCard({
       }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onClick={(e) => onCardClick(mod, e)}
+      title="Cliquer pour ouvrir les actions"
     >
       <div
-        onClick={(e) => {
-          e.stopPropagation();
-
-          if (selectedProfile === "Default") {
-            if (mod.status === "local") {
-              onRemoveFavorite(mod);
-            }
-            return;
-          }
-
-          if (mod.status === "common-linked" || mod.status === "common-excluded") {
-            onToggleExcluded(mod);
-            return;
-          }
-
-          if (mod.status === "local") {
-            onCardClick(mod, e);
-          }
-        }}
         style={{
           position: "absolute",
           top: "8px",
@@ -429,20 +487,9 @@ function ModCard({
           fontSize: "12px",
           color: getStatusColor(mod.status),
           zIndex: 2,
-          cursor: selectedProfile !== "Default" ? "pointer" : "default",
-          opacity: selectedProfile !== "Default" ? 1 : 0.85
+          opacity: 0.9
         }}
-        title={
-          selectedProfile === "Default"
-            ? "Retirer des favoris"
-            : mod.status === "common-linked"
-            ? "Cliquer pour exclure"
-            : mod.status === "common-excluded"
-            ? "Cliquer pour réintégrer"
-            : mod.status === "local"
-            ? "Cliquer pour gérer ce mod local"
-            : getStatusTooltip(mod.status)
-        }
+        title={getStatusTooltip(mod.status)}
       >
         {getStatusIcon(mod.status)}
       </div>
@@ -482,55 +529,50 @@ function ModCard({
           {formatSize(mod.size || 0)}
         </div>
 
-        {github?.tracked && (
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: "6px",
-              marginTop: "8px"
-            }}
-          >
-            <Badge
-              background="#444"
-              title="Ouvrir le depot GitHub"
-              onClick={() => onOpenGithubRepo(mod)}
-            >
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "6px",
+            marginTop: "8px"
+          }}
+        >
+          {github?.tracked && (
+            <Badge background="#444" title="Mod suivi via GitHub">
               GitHub
             </Badge>
+          )}
 
-            {github.includePrereleases && (
-              <Badge
-                background="#5b3d1f"
-                title="Le suivi utilise aussi les pre-releases"
-              >
-                pre-release
-              </Badge>
-            )}
+          {external?.tracked && (
+            <Badge background="#355c7d" title="Mod externe suivi">
+              Externe
+            </Badge>
+          )}
 
-            {github.lastError ? (
-              <Badge
-                background="#8b2f2f"
-                title={github.lastError}
-              >
-                Erreur GitHub
-              </Badge>
-            ) : github.updateAvailable ? (
-              <Badge
-                background="#a86b2a"
-                title={
-                  isUpdatingGithub
-                    ? "Mise a jour en cours..."
-                    : "Cliquer pour mettre a jour"
-                }
-                onClick={() => onUpdateGithubMod(mod)}
-                disabled={isUpdatingGithub}
-              >
-                {isUpdatingGithub ? "Mise a jour..." : "MAJ dispo"}
-              </Badge>
-            ) : null}
-          </div>
-        )}
+          {github?.includePrereleases && (
+            <Badge
+              background="#5b3d1f"
+              title="Le suivi utilise aussi les pre-releases"
+            >
+              pre-release
+            </Badge>
+          )}
+
+          {github?.lastError && (
+            <Badge background="#8b2f2f" title={github.lastError}>
+              Erreur GitHub
+            </Badge>
+          )}
+
+          {github?.updateAvailable && !github?.lastError && (
+            <Badge
+              background="#a86b2a"
+              title="Une mise à jour GitHub est disponible"
+            >
+              MAJ dispo
+            </Badge>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -556,6 +598,9 @@ export default function App() {
   const [githubRepoUrl, setGithubRepoUrl] = useState("");
   const [githubIncludePrereleases, setGithubIncludePrereleases] = useState(false);
   const [githubUpdatingKey, setGithubUpdatingKey] = useState(null);
+  const [showExternalModal, setShowExternalModal] = useState(false);
+  const [externalZipPath, setExternalZipPath] = useState("");
+  const [externalUrl, setExternalUrl] = useState("");
   
   const requestIdRef = useRef(0);
 
@@ -655,7 +700,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
-	useEffect(() => {
+  useEffect(() => {
 	  async function loadVersion() {
 		const v = await window.fs25.getAppVersion();
 		setAppVersion(v);
@@ -812,44 +857,14 @@ export default function App() {
     await refreshProfileData(selectedProfile, requestId);
   }
 
-  function handleCardClick(mod, event) {
-    if (selectedProfile === "Default") return;
-
-    if (mod.status === "local") {
-      setContextMenu({
-        mod,
-        x: event.clientX,
-        y: event.clientY
-      });
-    }
-  }
-
-  async function handleAddGithubMod() {
-    const cleanUrl = githubRepoUrl.trim();
-
-    if (!cleanUrl) {
-      showToast("Merci de saisir une URL GitHub", "error");
-      return;
-    }
-
-    showToast("Téléchargement du mod GitHub en cours...");
-
-    const result = await window.fs25.addGithubMod(selectedProfile, cleanUrl);
-
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-      return;
-    }
-
-    showToast(`${result.fileName} téléchargé depuis ${result.repo}`);
-
-    setShowGithubModal(false);
-    setGithubRepoUrl("");
-
-    const requestId = ++requestIdRef.current;
-    setLoadingMods(true);
-    await refreshProfileData(selectedProfile, requestId);
-  }
+	function handleCardClick(mod, event) {
+	  setContextMenu({
+		mod,
+		selectedProfile,
+		x: event.clientX,
+		y: event.clientY
+	  });
+	}
 
   async function handleAddGithubMod() {
     const cleanUrl = githubRepoUrl.trim();
@@ -946,6 +961,79 @@ export default function App() {
     await refreshProfileData(selectedProfile, requestId);
   }
   
+  async function handleLaunchGame() {
+    const result = await window.fs25.launchGame(PLAYNITE_URL);
+
+    if (!result.success) {
+      showToast(`Erreur : ${result.error}`, "error");
+    }
+  }
+
+  async function handlePickExternalZip() {
+    const result = await window.fs25.pickExternalZip();
+
+    if (!result.success) {
+      if (!result.canceled) {
+        showToast(`Erreur : ${result.error}`, "error");
+      }
+      return;
+    }
+
+    setExternalZipPath(result.filePath);
+  }
+
+  async function handleAddExternalMod() {
+    const zipPath = externalZipPath.trim();
+    const url = externalUrl.trim();
+
+    if (!zipPath) {
+      showToast("Merci de sélectionner un fichier ZIP", "error");
+      return;
+    }
+
+    if (!url) {
+      showToast("Merci de saisir une URL", "error");
+      return;
+    }
+
+    const result = await window.fs25.addExternalMod(selectedProfile, zipPath, url);
+
+    if (!result.success) {
+      showToast(`Erreur : ${result.error}`, "error");
+      return;
+    }
+
+    showToast(`${result.fileName} ajouté comme mod externe`, "success");
+
+    setShowExternalModal(false);
+    setExternalZipPath("");
+    setExternalUrl("");
+
+    const requestId = ++requestIdRef.current;
+    setLoadingMods(true);
+    await refreshProfileData(selectedProfile, requestId);
+  }
+
+  async function handleOpenExternalUrl(url) {
+    const result = await window.fs25.openExternalUrl(url);
+
+    if (!result.success) {
+      showToast(`Erreur : ${result.error}`, "error");
+    }
+  }
+
+  async function handleOpenModZip(mod) {
+  const targetProfile =
+    mod.status === "common-linked" || mod.status === "common-excluded"
+      ? "Default"
+      : selectedProfile;
+
+  const result = await window.fs25.openModZip(targetProfile, mod.fileName);
+
+  if (!result.success) {
+    showToast(`Erreur : ${result.error}`, "error");
+  }
+}
   
   const hasPendingChange = selectedProfile !== activeProfile;
   const isDefaultProfile = selectedProfile === "Default";
@@ -957,6 +1045,7 @@ export default function App() {
   const githubTrackedCount = mods.filter((m) => m.github?.tracked).length;
   const hasGithubTrackedMods = githubTrackedCount > 0;
   const githubUpdatesCount = mods.filter((m) => m.github?.updateAvailable).length;
+  const externalModsCount = mods.filter((m) => m.external?.tracked).length
 
   const totalSize = mods
     .filter((m) => m.status === "local")
@@ -991,8 +1080,8 @@ export default function App() {
     displayedMods = mods.filter((m) => m.github?.tracked);
   }
 
-  if (filter === "githubUpdates") {
-    displayedMods = mods.filter((m) => m.github?.updateAvailable);
+  if (filter === "external") {
+    displayedMods = mods.filter((m) => m.external?.tracked);
   }
   
 	if (search.trim()) {
@@ -1085,51 +1174,74 @@ export default function App() {
           </div>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            gap: "12px",
-            flexWrap: "wrap",
-            marginBottom: "20px"
-          }}
-        >
-          <ActionButton
-            onClick={handleChangeProfile}
-            disabled={!hasPendingChange}
-          >
-            Changer de profil
-          </ActionButton>
+		<div
+		  style={{
+			display: "flex",
+			flexDirection: "column",
+			gap: "12px",
+			marginBottom: "20px"
+		  }}
+		>
+		  {/* Ligne 1 */}
+		  <div
+			style={{
+			  display: "flex",
+			  gap: "12px",
+			  flexWrap: "wrap",
+			  alignItems: "center"
+			}}
+		  >
+			<ActionButton
+			  onClick={handleChangeProfile}
+			  disabled={!hasPendingChange}
+			>
+			  Changer de profil
+			</ActionButton>
 
-          <ActionButton onClick={() => setShowCreateModal(true)}>
-            Créer un profil
-          </ActionButton>
+			<ActionButton onClick={() => setShowCreateModal(true)}>
+			  Créer un profil
+			</ActionButton>
 
-          <ActionButton
-            onClick={handleRepairLinks}
-            disabled={selectedProfile === "Default"}
-          >
-            Copier les favoris dans le profil
-          </ActionButton>
+			<ActionButton onClick={handleOpenProfileFolder}>
+			  Ouvrir le dossier
+			</ActionButton>
 
-          <ActionButton
-            onClick={handleRemoveLinks}
-            disabled={commonMods === 0 || selectedProfile === "Default"}
-            style={{ background: "#d9534f", color: "#fff" }}
-          >
-            Supprimer les favoris du profil
-          </ActionButton>
+			<ActionButton onClick={handleRefreshProfile}>
+			  Rafraîchir
+			</ActionButton>
+			
+			<ActionButton onClick={handleLaunchGame}>
+			  Lancer le jeu
+			</ActionButton>
+		  </div>
 
-          <ActionButton onClick={handleOpenProfileFolder}>
-            Ouvrir le dossier
-          </ActionButton>
+		  {/* Ligne 2 */}
+		  <div
+			style={{
+			  display: "flex",
+			  gap: "12px",
+			  flexWrap: "wrap",
+			  alignItems: "center"
+			}}
+		  >
+			<ActionButton
+			  onClick={handleRepairLinks}
+			  disabled={selectedProfile === "Default"}
+			>
+			  Copier les favoris dans le profil
+			</ActionButton>
 
-          <ActionButton onClick={handleRefreshProfile}>
-            Rafraîchir
-          </ActionButton>
-		  
-		   <ActionButton onClick={() => setShowGithubModal(true)}>
-            Ajouter un mod GitHub
-          </ActionButton>
+			<ActionButton
+			  onClick={handleRemoveLinks}
+			  disabled={commonMods === 0 || selectedProfile === "Default"}
+			  style={{ background: "#d9534f", color: "#fff" }}
+			>
+			  Supprimer les favoris du profil
+			</ActionButton>
+
+			<ActionButton onClick={() => setShowGithubModal(true)}>
+			  Ajouter un mod GitHub
+			</ActionButton>
 
 			<ActionButton
 			  onClick={hasGithubTrackedMods ? handleCheckGithubUpdates : undefined}
@@ -1142,7 +1254,13 @@ export default function App() {
 			>
 			  Vérifier les MAJ GitHub
 			</ActionButton>
-        </div>
+
+			<ActionButton onClick={() => setShowExternalModal(true)}>
+			  Ajouter un mod externe
+			</ActionButton>
+		  </div>
+		</div>
+		
         {conflictingMods.length > 0 && (
          <div
 		  style={{
@@ -1221,12 +1339,12 @@ export default function App() {
             active={filter === "githubTracked"}
           />
 
-          <StatCard
-            label="MAJ GitHub"
-            icon="⬆"
-            value={githubUpdatesCount}
-            onClick={() => setFilter("githubUpdates")}
-            active={filter === "githubUpdates"}
+         <StatCard
+            label="Mods externes"
+            icon="🌍"
+            value={externalModsCount}
+            onClick={() => setFilter("external")}
+            active={filter === "external"}
           />
         </div>
 		<input
@@ -1277,17 +1395,12 @@ export default function App() {
             }}
           >
             {displayedMods.map((mod) => (
-              <ModCard
-                key={`${mod.fileName}-${mod.status}`}
-                mod={mod}
-                selectedProfile={selectedProfile}
-				onToggleExcluded={handleToggleExcluded}
-				onCardClick={handleCardClick}
-				onRemoveFavorite={handleDeleteLocalMod}
-				onOpenGithubRepo={handleOpenGithubRepo}
-				onUpdateGithubMod={handleUpdateGithubMod}
-				githubUpdatingKey={githubUpdatingKey}
-              />
+			<ModCard
+			  key={`${mod.fileName}-${mod.status}`}
+			  mod={mod}
+			  selectedProfile={selectedProfile}
+			  onCardClick={handleCardClick}
+			/>
             ))}
           </div>
         )}
@@ -1348,6 +1461,114 @@ export default function App() {
                 Annuler
               </ActionButton>
               <ActionButton onClick={handleCreateProfile}>Valider</ActionButton>
+            </div>
+          </div>
+        </div>
+      )}
+	  
+	  {showExternalModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.65)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            zIndex: 1000
+          }}
+        >
+          <div
+            style={{
+              background: colors.panel,
+              border: `1px solid ${colors.border}`,
+              borderRadius: "12px",
+              padding: "24px",
+              width: "520px",
+              boxSizing: "border-box"
+            }}
+          >
+            <h3 style={{ marginTop: 0, marginBottom: "16px" }}>
+              Ajouter un mod externe
+            </h3>
+
+            <div style={{ fontSize: "13px", opacity: 0.85, marginBottom: "12px" }}>
+              Le ZIP sera copié dans le profil sélectionné :{" "}
+              <strong>{selectedProfile}</strong>
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
+              <input
+                type="text"
+                value={externalZipPath}
+                readOnly
+                placeholder="Aucun ZIP sélectionné"
+                style={{
+                  flex: 1,
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  border: `1px solid ${colors.border}`,
+                  background: colors.panel2,
+                  color: colors.text,
+                  fontSize: "14px",
+                  boxSizing: "border-box"
+                }}
+              />
+
+              <ActionButton onClick={handlePickExternalZip}>
+                Choisir un ZIP
+              </ActionButton>
+            </div>
+
+            <input
+              type="text"
+              value={externalUrl}
+              onChange={(e) => setExternalUrl(e.target.value)}
+              placeholder="https://..."
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: "8px",
+                border: `1px solid ${colors.border}`,
+                background: colors.panel2,
+                color: colors.text,
+                fontSize: "14px",
+                boxSizing: "border-box",
+                marginBottom: "12px"
+              }}
+            />
+
+            <div
+              style={{
+                fontSize: "12px",
+                opacity: 0.7,
+                lineHeight: "1.4",
+                marginBottom: "16px"
+              }}
+            >
+              Exemples : page KingMods, page de forum, page perso du mod.
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: "10px",
+                justifyContent: "flex-end"
+              }}
+            >
+              <ActionButton
+                onClick={() => {
+                  setShowExternalModal(false);
+                  setExternalZipPath("");
+                  setExternalUrl("");
+                }}
+              >
+                Annuler
+              </ActionButton>
+
+              <ActionButton onClick={handleAddExternalMod}>
+                Ajouter
+              </ActionButton>
             </div>
           </div>
         </div>
@@ -1499,12 +1720,17 @@ export default function App() {
         `}
       </style>
 
-      <ContextMenu
-        menu={contextMenu}
-        onClose={() => setContextMenu(null)}
-        onPromote={handlePromoteToCommon}
-        onDelete={handleDeleteLocalMod}
-      />
+	<ContextMenu
+	  menu={contextMenu}
+	  onClose={() => setContextMenu(null)}
+	  onPromote={handlePromoteToCommon}
+	  onDelete={handleDeleteLocalMod}
+	  onToggleExcluded={handleToggleExcluded}
+	  onOpenGithubRepo={handleOpenGithubRepo}
+	  onUpdateGithubMod={handleUpdateGithubMod}
+	  onOpenExternalUrl={handleOpenExternalUrl}
+	  onOpenModZip={handleOpenModZip}
+	/>
     </div>
   );
 }
