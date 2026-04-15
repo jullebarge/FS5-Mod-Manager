@@ -10,21 +10,50 @@ const fs = require('fs');
 const AdmZip = require('adm-zip');
 const os = require('os');
 const crypto = require('crypto');
-// const {
-    // execFile
-// } = require('child_process');
 const execFile = require('child_process').execFile;
 const https = require('https');
+const {
+    readJsonFile,
+    writeJsonFile,
+    ensureDir,
+    parseModDesc,
+    getModInfo,
+    parseIconFilename
+} = require('./utils');
 
 const basePath = "C:/Users/Julien/Documents/My Games/FarmingSimulator2025";
 
 const modsCartesPath = path.join(basePath, "modsCartes");
 const conversionLocks = new Map();
 
-function parseIconFilename(xml) {
-    // const match = xml.match(/<iconFilename>(.*?)<\/iconFilename>/);
-	const match = xml.match(/<iconFilename>\s*([\s\S]*?)\s*<\/iconFilename>/i);
-    return match ? match[1] : null;
+const modCache = new Map();
+const MOD_CACHE_TTL = 5 * 60 * 1000;
+
+function getModCacheKey(fullPath, mtimeMs) {
+    return `${fullPath}|${mtimeMs}`;
+}
+
+function getCachedModInfo(fullPath) {
+    const cached = modCache.get(fullPath);
+    if (!cached) return null;
+
+    if (Date.now() - cached.cachedAt > MOD_CACHE_TTL) {
+        modCache.delete(fullPath);
+        return null;
+    }
+
+    return cached.data;
+}
+
+function setCachedModInfo(fullPath, data) {
+    modCache.set(fullPath, {
+        data,
+        cachedAt: Date.now()
+    });
+}
+
+function clearModCache() {
+    modCache.clear();
 }
 
 function getIconPath() {
@@ -33,40 +62,6 @@ function getIconPath() {
     }
 
     return path.join(process.resourcesPath, 'assets', 'icon.ico');
-}
-
-function parseModTitle(xml, fileName) {
-    let name = fileName;
-
-    const titleBlockMatch = xml.match(/<title>([\s\S]*?)<\/title>/);
-
-    if (titleBlockMatch) {
-        const titleBlock = titleBlockMatch[1];
-
-        const frMatch = titleBlock.match(/<fr>(.*?)<\/fr>/);
-        const enMatch = titleBlock.match(/<en>(.*?)<\/en>/);
-        const simpleMatch = titleBlock.match(/^\s*([^<]+)\s*$/);
-
-        if (frMatch) {
-            name = frMatch[1];
-        } else if (enMatch) {
-            name = enMatch[1];
-        } else if (simpleMatch) {
-            name = simpleMatch[1];
-        }
-    }
-
-    return name;
-}
-
-function parseModVersion(xml) {
-    const versionMatch = xml.match(/<version>([^<]+)<\/version>/);
-    return versionMatch ? versionMatch[1] : "?";
-}
-
-function parseModAuthor(xml) {
-    const authorMatch = xml.match(/<author>(.*?)<\/author>/);
-    return authorMatch ? authorMatch[1] : "?";
 }
 
 function getModsFolder(profileName) {
@@ -251,22 +246,37 @@ function getManagedLinksFile(profile) {
 }
 
 function readManagedLinks(profile) {
+  const file = getManagedLinksFile(profile);
+  return readJsonFile(file, []);
+}
+
+function writeManagedLinks(profile, links) {
+  const file = getManagedLinksFile(profile);
+  writeJsonFile(file, links);
+}
+
+function readExcludedModsFromProfile(profile) {
+  const profileDir = getModsFolder(profile);
+  const excludeFile = path.join(profileDir, "exclude_mods.txt");
+
+  if (!fs.existsSync(excludeFile)) {
+    return [];
+  }
+
   try {
-    const file = getManagedLinksFile(profile);
-    if (!fs.existsSync(file)) return [];
-
-    const raw = fs.readFileSync(file, "utf-8");
-    const data = JSON.parse(raw);
-
-    return Array.isArray(data) ? data : [];
+    return fs.readFileSync(excludeFile, "utf-8")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
   } catch {
     return [];
   }
 }
 
-function writeManagedLinks(profile, links) {
-  const file = getManagedLinksFile(profile);
-  fs.writeFileSync(file, JSON.stringify(links, null, 2), "utf-8");
+function writeExcludedModsToProfile(profile, mods) {
+  const profileDir = getModsFolder(profile);
+  const excludeFile = path.join(profileDir, "exclude_mods.txt");
+  fs.writeFileSync(excludeFile, mods.join("\n"), "utf-8");
 }
 
 function parseGitHubRepoUrl(repoUrl) {
@@ -415,34 +425,16 @@ function selectGithubModAsset(release) {
 
 function getGithubRegistryPath() {
     const dir = app.getPath("userData");
-
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
-
+    ensureDir(dir);
     return path.join(dir, "github-mods.json");
 }
 
 function readGithubRegistry() {
-    try {
-        const file = getGithubRegistryPath();
-
-        if (!fs.existsSync(file)) {
-            return [];
-        }
-
-        const raw = fs.readFileSync(file, "utf-8");
-        const data = JSON.parse(raw);
-
-        return Array.isArray(data) ? data : [];
-    } catch {
-        return [];
-    }
+    return readJsonFile(getGithubRegistryPath(), []);
 }
 
 function writeGithubRegistry(data) {
-    const file = getGithubRegistryPath();
-    fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
+    writeJsonFile(getGithubRegistryPath(), data);
 }
 
 function sameFileName(a, b) {
@@ -552,34 +544,16 @@ function getTrackedEntriesForProfile(profile) {
 
 function getExternalRegistryPath() {
     const dir = app.getPath("userData");
-
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
-
+    ensureDir(dir);
     return path.join(dir, "external-mods.json");
 }
 
 function readExternalRegistry() {
-    try {
-        const file = getExternalRegistryPath();
-
-        if (!fs.existsSync(file)) {
-            return [];
-        }
-
-        const raw = fs.readFileSync(file, "utf-8");
-        const data = JSON.parse(raw);
-
-        return Array.isArray(data) ? data : [];
-    } catch {
-        return [];
-    }
+    return readJsonFile(getExternalRegistryPath(), []);
 }
 
 function writeExternalRegistry(data) {
-    const file = getExternalRegistryPath();
-    fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
+    writeJsonFile(getExternalRegistryPath(), data);
 }
 
 function upsertExternalRegistryEntry(entry) {
@@ -999,19 +973,9 @@ app.whenReady().then(() => {
 
         const files = fs.readdirSync(folder);
         const registry = readGithubRegistry();
-		const externalRegistry = readExternalRegistry();
+	const externalRegistry = readExternalRegistry();
 
-        let excludedMods = [];
-        if (profile !== "Default") {
-          const excludeFile = path.join(folder, "exclude_mods.txt");
-
-          if (fs.existsSync(excludeFile)) {
-            excludedMods = fs.readFileSync(excludeFile, "utf-8")
-              .split("\n")
-              .map((l) => l.trim())
-              .filter(Boolean);
-          }
-        }
+        const excludedMods = profile === "Default" ? [] : readExcludedModsFromProfile(profile);
 
         const managedLinks = profile === "Default" ? [] : readManagedLinks(profile);
 
@@ -1020,34 +984,49 @@ app.whenReady().then(() => {
           .map((file) => {
             const fullPath = path.join(folder, file);
 
+            const stats = fs.statSync(fullPath);
+            const cacheKey = getModCacheKey(fullPath, stats.mtimeMs);
+
             let name = file;
             let version = "?";
             let author = "?";
+            let iconFilename = null;
 
-            try {
-              const zip = new AdmZip(fullPath);
-              const xmlEntry = zip.getEntry("modDesc.xml");
+            const cached = getCachedModInfo(cacheKey);
 
-              if (xmlEntry) {
-                const xml = zip.readAsText(xmlEntry);
+            if (cached) {
+              name = cached.name;
+              version = cached.version;
+              author = cached.author;
+              iconFilename = cached.iconFilename;
+            } else {
+              try {
+                const zip = new AdmZip(fullPath);
+                const modInfo = getModInfo(zip, file);
 
-                name = parseModTitle(xml, file);
-                version = parseModVersion(xml);
-                author = parseModAuthor(xml);
+                name = modInfo.name;
+                version = modInfo.version;
+                author = modInfo.author;
+                iconFilename = modInfo.iconFilename;
+
+                setCachedModInfo(cacheKey, { name, version, author, iconFilename });
+              } catch (err) {
+                console.error("Erreur lecture mod:", file, err);
               }
-            } catch (err) {
-              console.error("Erreur lecture mod:", file, err);
             }
 
             const isManagedCommon =
               profile !== "Default" && managedLinks.includes(file);
 
-            const stats = fs.statSync(fullPath);
+            const isExcluded =
+              profile !== "Default" && excludedMods.includes(file);
 
             let status = "local";
 
             if (profile === "Default") {
               status = "local";
+            } else if (isExcluded) {
+              status = "common-excluded";
             } else if (isManagedCommon) {
               status = "common-linked";
             } else {
@@ -1066,6 +1045,7 @@ app.whenReady().then(() => {
               name,
               version,
               author,
+              iconFilename,
               icon: null,
               size: stats.size,
               isSymlink: isManagedCommon,
@@ -1143,17 +1123,7 @@ app.whenReady().then(() => {
 		  return [];
 		}
 
-		const modsDir = getModsFolder(profile);
-		const excludeFile = path.join(modsDir, "exclude_mods.txt");
-
-		if (!fs.existsSync(excludeFile)) {
-		  return [];
-		}
-
-		return fs.readFileSync(excludeFile, "utf-8")
-		  .split("\n")
-		  .map((line) => line.trim())
-		  .filter(Boolean);
+		return readExcludedModsFromProfile(profile);
 	  } catch (err) {
 		console.error("Erreur getExcludedMods:", err);
 		return [];
@@ -1168,15 +1138,8 @@ app.whenReady().then(() => {
 
 		const profileDir = getModsFolder(profile);
 		const defaultDir = getModsFolder("Default");
-		const excludeFile = path.join(profileDir, "exclude_mods.txt");
 
-		let excludedMods = [];
-		if (fs.existsSync(excludeFile)) {
-		  excludedMods = fs.readFileSync(excludeFile, "utf-8")
-			.split("\n")
-			.map((line) => line.trim())
-			.filter(Boolean);
-		}
+		const excludedMods = readExcludedModsFromProfile(profile);
 
 		if (!fs.existsSync(profileDir) || !fs.existsSync(defaultDir)) {
 		  return { success: false, error: "Dossier profil ou Default introuvable" };
@@ -1303,35 +1266,25 @@ app.whenReady().then(() => {
 
 		const profileDir = getModsFolder(profile);
 		const defaultDir = getModsFolder("Default");
-		const excludeFile = path.join(profileDir, "exclude_mods.txt");
 		const sourcePath = path.join(defaultDir, fileName);
 		const targetPath = path.join(profileDir, fileName);
 
-		let excludedMods = [];
-		if (fs.existsSync(excludeFile)) {
-		  excludedMods = fs.readFileSync(excludeFile, "utf-8")
-			.split("\n")
-			.map((line) => line.trim())
-			.filter(Boolean);
-		}
-
+		let excludedMods = readExcludedModsFromProfile(profile);
 		let managedLinks = readManagedLinks(profile);
 
 		const isExcluded = excludedMods.includes(fileName);
 
 		if (!isExcluded) {
-		  // 🔥 EXCLURE
 		  excludedMods.push(fileName);
 		  excludedMods = [...new Set(excludedMods)];
 
-		  // retirer le hard link s'il est géré par l'app
 		  if (managedLinks.includes(fileName) && fs.existsSync(targetPath)) {
 			fs.rmSync(targetPath, { force: true });
 		  }
 
 		  managedLinks = managedLinks.filter((m) => m !== fileName);
 
-		  fs.writeFileSync(excludeFile, excludedMods.join("\n"), "utf-8");
+		  writeExcludedModsToProfile(profile, excludedMods);
 		  writeManagedLinks(profile, managedLinks);
 
 		  return {
@@ -1339,7 +1292,6 @@ app.whenReady().then(() => {
 			excluded: true
 		  };
 		} else {
-		  // 🔥 REINTEGRER
 		  excludedMods = excludedMods.filter((m) => m !== fileName);
 
 		  if (!fs.existsSync(sourcePath)) {
@@ -1351,18 +1303,18 @@ app.whenReady().then(() => {
 			fs.linkSync(sourcePath, targetPath);
 		  }
 
-		  if (!managedLinks.includes(fileName)) {
+if (!managedLinks.includes(fileName)) {
 			managedLinks.push(fileName);
-		  }
+		}
 
-		  fs.writeFileSync(excludeFile, excludedMods.join("\n"), "utf-8");
-		  writeManagedLinks(profile, managedLinks);
+		writeExcludedModsToProfile(profile, excludedMods);
+		writeManagedLinks(profile, managedLinks);
 
-		  return {
+		return {
 			success: true,
 			excluded: false
-		  };
-		}
+		};
+	}
 	  } catch (err) {
 		console.error("Erreur toggleExcludedMod:", err);
 		return { success: false, error: err.message };
