@@ -98,6 +98,39 @@ function getModInfo(zip, fileName) {
     };
 }
 
+function parseModDescFromDirectory(dirPath, dirName) {
+    const modDescPath = path.join(dirPath, 'modDesc.xml');
+    if (!fs.existsSync(modDescPath)) {
+        return null;
+    }
+
+    try {
+        const xml = fs.readFileSync(modDescPath, 'utf-8');
+        return {
+            name: parseModTitle(xml, dirName),
+            version: parseModVersion(xml),
+            author: parseModAuthor(xml),
+            iconFilename: parseIconFilename(xml),
+            rawXml: xml
+        };
+    } catch {
+        return null;
+    }
+}
+
+function getModInfoFromDirectory(dirPath, dirName) {
+    const parsed = parseModDescFromDirectory(dirPath, dirName);
+    if (!parsed) {
+        return { name: dirName, version: '?', author: '?' };
+    }
+    return {
+        name: parsed.name,
+        version: parsed.version,
+        author: parsed.author,
+        iconFilename: parsed.iconFilename
+    };
+}
+
 module.exports = {
     readJsonFile,
     writeJsonFile,
@@ -107,5 +140,7 @@ module.exports = {
     parseModVersion,
     parseModAuthor,
     parseModDesc,
-    getModInfo
+    getModInfo,
+    parseModDescFromDirectory,
+    getModInfoFromDirectory
 };

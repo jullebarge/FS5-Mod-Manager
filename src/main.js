@@ -18,6 +18,8 @@ const {
     ensureDir,
     parseModDesc,
     getModInfo,
+    getModInfoFromDirectory,
+    parseModDescFromDirectory,
     parseIconFilename
 } = require('./utils');
 
@@ -28,6 +30,16 @@ const conversionLocks = new Map();
 
 const modCache = new Map();
 const MOD_CACHE_TTL = 5 * 60 * 1000;
+
+const iconCache = new Map();
+const ICON_CACHE_TTL = 30 * 60 * 1000;
+
+const registryCache = {
+    github: { data: [], cachedAt: 0 },
+    external: { data: [], cachedAt: 0 }
+};
+const excludedModsCache = new Map();
+const REGISTRY_CACHE_TTL = 30 * 1000;
 
 function getModCacheKey(fullPath, mtimeMs) {
     return `${fullPath}|${mtimeMs}`;
@@ -256,27 +268,33 @@ function writeManagedLinks(profile, links) {
 }
 
 function readExcludedModsFromProfile(profile) {
+  const cached = excludedModsCache.get(profile);
+  if (cached && Date.now() - cached.cachedAt < REGISTRY_CACHE_TTL) {
+    return cached.data;
+  }
+
   const profileDir = getModsFolder(profile);
   const excludeFile = path.join(profileDir, "exclude_mods.txt");
 
-  if (!fs.existsSync(excludeFile)) {
-    return [];
+  let data = [];
+  if (fs.existsSync(excludeFile)) {
+    try {
+      data = fs.readFileSync(excludeFile, "utf-8")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+    } catch {}
   }
 
-  try {
-    return fs.readFileSync(excludeFile, "utf-8")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
+  excludedModsCache.set(profile, { data, cachedAt: Date.now() });
+  return data;
 }
 
 function writeExcludedModsToProfile(profile, mods) {
   const profileDir = getModsFolder(profile);
   const excludeFile = path.join(profileDir, "exclude_mods.txt");
   fs.writeFileSync(excludeFile, mods.join("\n"), "utf-8");
+  excludedModsCache.set(profile, { data: mods, cachedAt: Date.now() });
 }
 
 function parseGitHubRepoUrl(repoUrl) {
@@ -430,11 +448,17 @@ function getGithubRegistryPath() {
 }
 
 function readGithubRegistry() {
-    return readJsonFile(getGithubRegistryPath(), []);
+    if (Date.now() - registryCache.github.cachedAt < REGISTRY_CACHE_TTL && registryCache.github.data.length > 0) {
+        return registryCache.github.data;
+    }
+    const data = readJsonFile(getGithubRegistryPath(), []);
+    registryCache.github = { data, cachedAt: Date.now() };
+    return data;
 }
 
 function writeGithubRegistry(data) {
     writeJsonFile(getGithubRegistryPath(), data);
+    registryCache.github = { data, cachedAt: Date.now() };
 }
 
 function sameFileName(a, b) {
@@ -549,11 +573,17 @@ function getExternalRegistryPath() {
 }
 
 function readExternalRegistry() {
-    return readJsonFile(getExternalRegistryPath(), []);
+    if (Date.now() - registryCache.external.cachedAt < REGISTRY_CACHE_TTL && registryCache.external.data.length > 0) {
+        return registryCache.external.data;
+    }
+    const data = readJsonFile(getExternalRegistryPath(), []);
+    registryCache.external = { data, cachedAt: Date.now() };
+    return data;
 }
 
 function writeExternalRegistry(data) {
     writeJsonFile(getExternalRegistryPath(), data);
+    registryCache.external = { data, cachedAt: Date.now() };
 }
 
 function upsertExternalRegistryEntry(entry) {
@@ -713,9 +743,6 @@ function downloadFile(url, destinationPath) {
 function createWindow() {
     const iconPath = getIconPath();
 
-    //console.log("ICON PATH =", iconPath);
-    //console.log("ICON EXISTS =", fs.existsSync(iconPath));
-
     const mainWindow = new BrowserWindow({
         width: 1500,
         height: 1200,
@@ -725,7 +752,7 @@ function createWindow() {
         }
     });
 
-	//mainWindow.setMenu(null);
+	mainWindow.setMenu(null);
     mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
 }
 
@@ -980,11 +1007,22 @@ app.whenReady().then(() => {
         const managedLinks = profile === "Default" ? [] : readManagedLinks(profile);
 
         const mods = files
-          .filter((f) => f.toLowerCase().endsWith(".zip"))
+          .filter((f) => {
+            const fullPath = path.join(folder, f);
+            const stat = fs.statSync(fullPath);
+            if (!f.toLowerCase().endsWith(".zip") && !stat.isDirectory()) {
+                return false;
+            }
+            if (stat.isDirectory()) {
+                const modDescPath = path.join(fullPath, "modDesc.xml");
+                return fs.existsSync(modDescPath);
+            }
+            return f.toLowerCase().endsWith(".zip");
+          })
           .map((file) => {
             const fullPath = path.join(folder, file);
-
             const stats = fs.statSync(fullPath);
+            const isDirectory = stats.isDirectory();
             const cacheKey = getModCacheKey(fullPath, stats.mtimeMs);
 
             let name = file;
@@ -999,6 +1037,17 @@ app.whenReady().then(() => {
               version = cached.version;
               author = cached.author;
               iconFilename = cached.iconFilename;
+            } else if (isDirectory) {
+              try {
+                const modInfo = getModInfoFromDirectory(fullPath, file);
+                name = modInfo.name;
+                version = modInfo.version;
+                author = modInfo.author;
+                iconFilename = modInfo.iconFilename;
+                setCachedModInfo(cacheKey, { name, version, author, iconFilename });
+              } catch (err) {
+                console.error("Erreur lecture mod dossier:", file, err);
+              }
             } else {
               try {
                 const zip = new AdmZip(fullPath);
@@ -1033,12 +1082,25 @@ app.whenReady().then(() => {
               status = "local";
             }
 
+            if (isDirectory) {
+                status = "directory";
+            }
+
             const trackedEntry = getTrackedEntryForDisplayedMod(
               registry,
               profile,
               file,
               status
             );
+
+            let isOutOfSync = false;
+            if (isManagedCommon && !isDirectory) {
+                const defaultPath = path.join(getModsFolder("Default"), file);
+                if (fs.existsSync(defaultPath)) {
+                    const defaultStats = fs.statSync(defaultPath);
+                    isOutOfSync = defaultStats.size !== stats.size;
+                }
+            }
 
             return {
               fileName: file,
@@ -1047,8 +1109,10 @@ app.whenReady().then(() => {
               author,
               iconFilename,
               icon: null,
-              size: stats.size,
+              size: isDirectory ? 0 : stats.size,
               isSymlink: isManagedCommon,
+              isDirectory,
+              isOutOfSync,
               status,
               fullPath,
               github: buildGithubMeta(trackedEntry),
@@ -1074,6 +1138,50 @@ app.whenReady().then(() => {
     ipcMain.handle('fs25:getModIcon', async(_event, mod) => {
         try {
             const fullPath = mod.fullPath;
+
+            const cached = iconCache.get(fullPath);
+            if (cached && Date.now() - cached.cachedAt < ICON_CACHE_TTL) {
+                return cached.data;
+            }
+
+            if (mod.isDirectory) {
+                const modDescPath = path.join(fullPath, "modDesc.xml");
+                if (!fs.existsSync(modDescPath)) return null;
+
+                const xml = fs.readFileSync(modDescPath, "utf-8");
+                const iconFile = parseIconFilename(xml);
+                if (!iconFile) return null;
+
+                const baseName = iconFile.replace(/\.[^/.]+$/, "");
+                const iconDir = path.dirname(path.join(fullPath, iconFile));
+
+                let iconPath = path.join(fullPath, baseName + ".dds");
+                if (!fs.existsSync(iconPath)) {
+                    iconPath = path.join(fullPath, iconFile);
+                }
+                if (!fs.existsSync(iconPath)) {
+                    const dirFiles = fs.readdirSync(fullPath);
+                    const found = dirFiles.find(f =>
+                        !fs.statSync(path.join(fullPath, f)).isDirectory() &&
+                        f.toLowerCase().endsWith(baseName.toLowerCase() + ".dds"));
+                    if (found) {
+                        iconPath = path.join(fullPath, found);
+                    }
+                }
+
+                if (!fs.existsSync(iconPath)) return null;
+
+                const ddsBuffer = fs.readFileSync(iconPath);
+                const result = await convertDdsToPngWithTexconv(
+                    ddsBuffer,
+                    fullPath,
+                    path.basename(iconPath));
+
+                if (result) {
+                    iconCache.set(fullPath, { data: result, cachedAt: Date.now() });
+                }
+                return result;
+            }
 
             const zip = new AdmZip(fullPath);
             const xmlEntry = zip.getEntry("modDesc.xml");
@@ -1106,10 +1214,16 @@ app.whenReady().then(() => {
 
             const ddsBuffer = entry.getData();
 
-            return await convertDdsToPngWithTexconv(
+            const result = await convertDdsToPngWithTexconv(
                 ddsBuffer,
                 fullPath,
                 entry.entryName);
+
+            if (result) {
+                iconCache.set(fullPath, { data: result, cachedAt: Date.now() });
+            }
+
+            return result;
 
         } catch (err) {
             console.error("Erreur getModIcon:", err);

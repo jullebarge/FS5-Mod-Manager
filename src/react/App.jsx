@@ -187,6 +187,8 @@ function getStatusIcon(status) {
       return "🚫";
     case "local":
       return "📦";
+    case "directory":
+      return "📁";
     default:
       return "❓";
   }
@@ -200,6 +202,8 @@ function getStatusTooltip(status) {
       return "Mod favori exclu";
     case "local":
       return "Mod local";
+    case "directory":
+      return "Mod dossier (dézippé)";
     default:
       return "Statut inconnu";
   }
@@ -213,6 +217,8 @@ function getStatusColor(status) {
       return "#d9534f";
     case "local":
       return "#cccccc";
+    case "directory":
+      return "#5bc0de";
     default:
       return "#999999";
   }
@@ -241,7 +247,6 @@ function formatSize(bytes) {
   const kb = 1024;
   const mb = kb * 1024;
   const gb = mb * 1024;
-  console.log(bytes);
 
   if (bytes >= gb) {
     return bytes.toLocaleString("fr-FR", {
@@ -430,10 +435,10 @@ function ContextMenu({
             onClose();
           }}
         >
-          🗜 Ouvrir le zip
+          {mod.isDirectory ? "📁 Ouvrir le dossier" : "🗜 Ouvrir le zip"}
         </MenuItem>
 
-        {(mod.status === "local" || mod.status === "common-linked") && (
+        {(mod.status === "local" || mod.status === "common-linked" || mod.status === "directory") && (
           <MenuItem
             onClick={() => {
               onDelete(mod);
@@ -526,7 +531,7 @@ function ModCard({
         <div style={{ fontSize: "12px", opacity: 0.7 }}>v{mod.version}</div>
         <div style={{ fontSize: "12px", opacity: 0.7 }}>{mod.author}</div>
         <div style={{ fontSize: "12px", opacity: 0.7 }}>
-          {formatSize(mod.size || 0)}
+          {mod.isDirectory ? "Dossier" : formatSize(mod.size || 0)}
         </div>
 
         <div
@@ -786,7 +791,7 @@ export default function App() {
 
   async function handleToggleExcluded(mod) {
     if (selectedProfile === "Default") return;
-    if (mod.status === "local") return;
+    if (mod.status === "local" || mod.status === "directory") return;
 
     const result = await window.fs25.toggleExcludedMod(
       selectedProfile,
@@ -820,7 +825,7 @@ export default function App() {
   }
 
   async function handlePromoteToCommon(mod) {
-    if (mod.status !== "local") return;
+    if (mod.status !== "local" || mod.isDirectory) return;
 
     const result = await window.fs25.promoteToCommon(
       selectedProfile,
@@ -1040,7 +1045,7 @@ export default function App() {
 
   const totalMods = mods.length;
   const commonMods = mods.filter((m) => m.status === "common-linked").length;
-  const localMods = mods.filter((m) => m.status === "local").length;
+  const localMods = mods.filter((m) => m.status === "local" || m.status === "directory").length;
   const excludedCount = excludedMods.length;
   const githubTrackedCount = mods.filter((m) => m.github?.tracked).length;
   const hasGithubTrackedMods = githubTrackedCount > 0;
@@ -1053,6 +1058,9 @@ export default function App() {
 
   const presentInProfile = new Set(mods.map((m) => m.fileName));
   const conflictingMods = mods.filter((m) => excludedMods.includes(m.fileName));
+  const outOfSyncFavorites = isDefaultProfile
+    ? []
+    : mods.filter((m) => m.status === "common-linked" && m.isOutOfSync);
 
   let displayedMods = mods;
 
@@ -1062,7 +1070,7 @@ export default function App() {
     }
 
     if (filter === "local") {
-      displayedMods = mods.filter((m) => m.status === "local");
+      displayedMods = mods.filter((m) => m.status === "local" || m.status === "directory");
     }
 
     if (filter === "excluded") {
@@ -1283,6 +1291,30 @@ export default function App() {
 		  </div>
 		</div>
         )}
+
+        {outOfSyncFavorites.length > 0 && (
+          <div
+            style={{
+              marginTop: "16px",
+              marginBottom: "20px",
+              padding: "12px 16px",
+              background: "#4a3320",
+              border: "1px solid #a86b2a",
+              borderRadius: "8px",
+              color: "#ffd28a"
+            }}
+          >
+            <div style={{ fontWeight: 700, marginBottom: "6px" }}>
+              {outOfSyncFavorites.length} favori(s) désynchronisé(s) :
+            </div>
+
+            <div style={{ fontSize: "13px", lineHeight: "1.4" }}>
+              {outOfSyncFavorites.slice(0, 10).map(m => m.name).join(", ")}
+              {outOfSyncFavorites.length > 10 && " ..."}
+            </div>
+          </div>
+        )}
+
         <div
           style={{
             display: "flex",
