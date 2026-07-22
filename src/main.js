@@ -1507,7 +1507,7 @@ if (!managedLinks.includes(fileName)) {
 		  return { success: false, error: "Fichier introuvable" };
 		}
 
-		fs.rmSync(filePath, { force: true });
+		fs.rmSync(filePath, { recursive: true, force: true });
 		removeGithubRegistryEntry(profile, fileName);
 		removeExternalRegistryEntry(profile, fileName);
 		 
