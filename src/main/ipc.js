@@ -91,11 +91,11 @@ function registerIpcHandlers() {
 
     handle("fs25:saveSettings", updateSettings, { label: "saveSettings" });
 
-    handle("fs25:pickGameFolder", () => pickPath({
-        title: "Choisir le dossier FarmingSimulator2025",
-        defaultPath: getBasePath(),
+    handle("fs25:pickFolder", (title, defaultPath) => pickPath({
+        title: String(title || "Choisir un dossier"),
+        defaultPath: defaultPath || getBasePath(),
         properties: ["openDirectory"]
-    }, "folderPath"), { label: "pickGameFolder" });
+    }, "folderPath"), { label: "pickFolder" });
 
     handle("fs25:isGameRunning", isGameRunning);
 

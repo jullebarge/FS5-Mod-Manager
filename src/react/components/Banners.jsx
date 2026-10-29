@@ -21,6 +21,71 @@ export function ConflictBanner({ mods }) {
   );
 }
 
+// Dependances declarees par les mods du profil (modDesc.xml) mais absentes du dossier,
+// regroupees par dependance, avec l'action adaptee a l'endroit ou elle se trouve
+export function DependencyBanner({ mods, onResolve }) {
+  const byDependency = new Map();
+
+  for (const mod of mods) {
+    for (const dependency of mod.missingDependencies || []) {
+      const key = dependency.modName.toLowerCase();
+      if (!byDependency.has(key)) {
+        byDependency.set(key, { ...dependency, requiredBy: [] });
+      }
+      byDependency.get(key).requiredBy.push(mod.name);
+    }
+  }
+
+  if (byDependency.size === 0) return null;
+
+  const dependencies = [...byDependency.values()];
+  const smallButton = { padding: "4px 10px", fontSize: "12px" };
+
+  return (
+    <div className="warning-banner">
+      <div style={{ fontWeight: 700, marginBottom: "8px" }}>
+        {dependencies.length} dépendance(s) manquante(s) :
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px" }}>
+        {dependencies.slice(0, MAX_LISTED).map((dependency) => {
+          const { availability } = dependency;
+
+          return (
+            <div
+              key={dependency.modName}
+              style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}
+            >
+              <span style={{ fontWeight: 600 }}>{dependency.modName}</span>
+              <span style={{ opacity: 0.85 }}>requis par {dependency.requiredBy.join(", ")}</span>
+
+              {availability.type === "excluded-favorite" && (
+                <ActionButton style={smallButton} onClick={() => onResolve(dependency)}>
+                  Réintégrer le favori
+                </ActionButton>
+              )}
+              {availability.type === "favorite" && (
+                <ActionButton style={smallButton} onClick={() => onResolve(dependency)}>
+                  Lier le favori
+                </ActionButton>
+              )}
+              {availability.type === "other-profile" && (
+                <ActionButton style={smallButton} onClick={() => onResolve(dependency)}>
+                  Copier depuis {availability.profile}
+                </ActionButton>
+              )}
+              {availability.type === "none" && (
+                <span style={{ opacity: 0.85 }}>introuvable dans tes dossiers : à télécharger</span>
+              )}
+            </div>
+          );
+        })}
+        {dependencies.length > MAX_LISTED && <div>...</div>}
+      </div>
+    </div>
+  );
+}
+
 // Favoris dont la copie du profil n'est plus le fichier de Default : deux sens de correction,
 // le bouton recommande (version la plus recente) est mis en avant
 export function OutOfSyncBanner({ mods, onPromote, onRelink }) {

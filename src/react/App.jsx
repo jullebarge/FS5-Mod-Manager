@@ -7,7 +7,7 @@ import { ActionButton, StatCard } from "./components/Controls";
 import { ToastStack } from "./components/Toasts";
 import { ContextMenu } from "./components/ContextMenu";
 import { ModCard } from "./components/ModCard";
-import { ConflictBanner, OutOfSyncBanner } from "./components/Banners";
+import { ConflictBanner, DependencyBanner, OutOfSyncBanner } from "./components/Banners";
 import { CreateProfileModal } from "./modals/CreateProfileModal";
 import { GithubModModal } from "./modals/GithubModModal";
 import { ExternalModModal } from "./modals/ExternalModModal";
@@ -246,6 +246,35 @@ export default function App() {
     showErrorList("Copie impossible", result.errors);
   }
 
+  // Dependance manquante : reintegrer / lier le favori, ou copier depuis un autre profil
+  async function handleResolveDependency(dependency) {
+    const { availability } = dependency;
+    let result;
+
+    if (availability.type === "excluded-favorite") {
+      result = await window.fs25.toggleExcludedMod(selectedProfile, availability.fileName);
+    } else if (availability.type === "favorite") {
+      result = await window.fs25.relinkFavorite(selectedProfile, availability.fileName);
+    } else if (availability.type === "other-profile") {
+      result = await window.fs25.copyModToProfiles(
+        availability.profile,
+        availability.fileName,
+        [selectedProfile],
+        {}
+      );
+      if (result.success && result.errors.length > 0) {
+        result = { success: false, error: result.errors.join(", ") };
+      }
+    } else {
+      return;
+    }
+
+    if (!checkResult(result)) return;
+
+    showToast(`${dependency.modName} ajouté au profil`, "success");
+    await refreshInPlace();
+  }
+
   // Nettoyage depuis l'analyse des sauvegardes
   async function handleExcludeFavorites(modsToExclude) {
     const result = await window.fs25.excludeFavorites(
@@ -317,8 +346,8 @@ export default function App() {
     await refreshInPlace();
   }
 
-  async function handlePickGameFolder() {
-    const result = await window.fs25.pickGameFolder();
+  async function handlePickFolder(title, defaultPath) {
+    const result = await window.fs25.pickFolder(title, defaultPath);
 
     if (!result.success) {
       if (!result.canceled) {
@@ -633,6 +662,8 @@ export default function App() {
 
         <ConflictBanner mods={conflictingMods} />
 
+        <DependencyBanner mods={mods} onResolve={handleResolveDependency} />
+
         <OutOfSyncBanner
           mods={outOfSyncFavorites}
           onPromote={handlePromoteProfileVersion}
@@ -758,7 +789,7 @@ export default function App() {
         <SettingsModal
           settings={settings}
           onCancel={() => setOpenModal(null)}
-          onPickFolder={handlePickGameFolder}
+          onPickFolder={handlePickFolder}
           onSave={handleSaveSettings}
         />
       )}

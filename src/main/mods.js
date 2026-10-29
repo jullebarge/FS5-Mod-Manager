@@ -11,6 +11,7 @@ const { makeIconKey, getIconUrl, hasCachedIcon } = require('./icons');
 const { githubRegistry, externalRegistry, matchesEntry } = require('./registry');
 const { buildGithubMeta } = require('./github');
 const { getFavoriteSyncState, removeFavoriteFromProfiles } = require('./links');
+const { getModNameFromFile, getProfileModNames, findAvailability } = require('./modLocator');
 
 function buildExternalMeta(entry) {
     if (!entry) return null;
@@ -64,8 +65,17 @@ function getMods(profile) {
     const excludedMods = isDefault ? [] : readExcludedModsFromProfile(profile);
     const managedLinks = isDefault ? [] : readManagedLinks(profile);
     const defaultFolder = getModsFolder(DEFAULT_PROFILE);
+    const modFiles = listModFiles(folder);
+    const presentModNames = new Set(modFiles.map((m) => getModNameFromFile(m.file).toLowerCase()));
 
-    return listModFiles(folder).map(({ file, fullPath, stats, isDirectory, versionKey }) => {
+    // contenu des autres dossiers, lu seulement si une dependance manque
+    let profileModNames = null;
+    function locateDependency(modName) {
+        profileModNames = profileModNames || getProfileModNames();
+        return { modName, availability: findAvailability(modName, profile, excludedMods, profileModNames) };
+    }
+
+    return modFiles.map(({ file, fullPath, stats, isDirectory, versionKey }) => {
         const cacheKey = getModCacheKey(file, versionKey);
         const modInfo = readModInfo(file, fullPath, isDirectory, cacheKey);
         const iconFilename = modInfo.iconFilename || null;
@@ -74,6 +84,10 @@ function getMods(profile) {
         const isManagedCommon = !isDefault && includesFileName(managedLinks, file);
         const isExcluded = !isDefault && includesFileName(excludedMods, file);
         const status = getModStatus(profile, isDirectory, isExcluded, isManagedCommon);
+
+        const missingDependencies = (modInfo.dependencies || [])
+            .filter((dependency) => !presentModNames.has(dependency.toLowerCase()))
+            .map(locateDependency);
 
         let syncState = { outOfSync: false, isDuplicateCopy: false, direction: null, defaultVersion: null };
         if (isManagedCommon && !isDirectory) {
@@ -96,6 +110,7 @@ function getMods(profile) {
             isDuplicateCopy: syncState.isDuplicateCopy,
             syncDirection: syncState.direction,
             defaultVersion: syncState.defaultVersion,
+            missingDependencies,
             status,
             fullPath,
             github: buildGithubMeta(githubRegistry.findForDisplayedMod(githubEntries, profile, file, status)),

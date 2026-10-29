@@ -38,7 +38,7 @@ contextBridge.exposeInMainWorld('fs25', {
   cleanIconCache: () => ipcRenderer.invoke("fs25:cleanIconCache"),
   getSettings: () => ipcRenderer.invoke("fs25:getSettings"),
   saveSettings: (settings) => ipcRenderer.invoke("fs25:saveSettings", settings),
-  pickGameFolder: () => ipcRenderer.invoke("fs25:pickGameFolder"),
+  pickFolder: (title, defaultPath) => ipcRenderer.invoke("fs25:pickFolder", title, defaultPath),
   pickExternalZip: () => ipcRenderer.invoke("fs25:pickExternalZip"),
   addExternalMod: (profile, zipPath, url) => ipcRenderer.invoke("fs25:addExternalMod", profile, zipPath, url),
   openExternalUrl: (url) => ipcRenderer.invoke("fs25:openExternalUrl", url),

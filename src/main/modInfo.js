@@ -7,7 +7,8 @@ const { withZip } = require('../zipReader');
 // Cache persistant des infos de mods (nom, version, auteur, icone).
 // La cle contient taille + date de modification : une entree n'est jamais perimee,
 // et un favori lie dans un profil partage la meme entree que son original dans Default.
-const MOD_INFO_CACHE_VERSION = 1;
+// version 2 : ajout des dependances (les anciennes entrees sont relues une fois)
+const MOD_INFO_CACHE_VERSION = 2;
 const MOD_INFO_CACHE_MAX_AGE = 90 * 24 * 60 * 60 * 1000;
 const MOD_INFO_CACHE_TOUCH_INTERVAL = 24 * 60 * 60 * 1000;
 let modInfoCache = null;

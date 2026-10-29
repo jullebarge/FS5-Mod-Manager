@@ -52,10 +52,33 @@ function IconCacheSection() {
   );
 }
 
-// onPickFolder renvoie le dossier choisi, ou null si annule
+// Champ "dossier" : saisie libre ou bouton Parcourir. defaultHint : dossier utilise si vide
+function FolderField({ label, value, placeholder, hint, onChange, onBrowse }) {
+  return (
+    <>
+      <label className="field-label">{label}</label>
+      <div style={{ display: "flex", gap: "10px", marginBottom: "6px" }}>
+        <input
+          type="text"
+          className="text-input"
+          value={value}
+          placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)}
+          style={{ flex: 1 }}
+        />
+        <ActionButton onClick={onBrowse}>Parcourir</ActionButton>
+      </div>
+      <div className="hint" style={{ marginBottom: "16px" }}>{hint}</div>
+    </>
+  );
+}
+
+// onPickFolder(titre, dossierInitial) renvoie le dossier choisi, ou null si annule
 export function SettingsModal({ settings, onCancel, onPickFolder, onSave }) {
   const [form, setForm] = useState({
     gamePath: settings?.gamePath || "",
+    modsPath: settings?.modsPath || "",
+    profilesPath: settings?.profilesPath || "",
     launchUrl: settings?.launchUrl || ""
   });
 
@@ -63,17 +86,23 @@ export function SettingsModal({ settings, onCancel, onPickFolder, onSave }) {
     setForm((prev) => ({ ...prev, [field]: value }));
   }
 
-  async function pickFolder() {
-    const folderPath = await onPickFolder();
+  async function browse(field, title, initialPath) {
+    const folderPath = await onPickFolder(title, initialPath);
     if (folderPath) {
-      setField("gamePath", folderPath);
+      setField(field, folderPath);
     }
   }
+
+  // dossiers utilises quand les champs sont vides, deduits du dossier du jeu saisi
+  const gameFolder = form.gamePath.replace(/[\\/]+$/, "");
+  const defaultModsPath = `${gameFolder}\\mods`;
+  const defaultProfilesPath = `${gameFolder}\\modsCartes`;
 
   return (
     <Modal
       title="Réglages"
-      width={560}
+      width={600}
+      scrollable
       actions={
         <>
           <ActionButton onClick={onCancel}>Annuler</ActionButton>
@@ -81,22 +110,31 @@ export function SettingsModal({ settings, onCancel, onPickFolder, onSave }) {
         </>
       }
     >
-      <label className="field-label">
-        Dossier du jeu (contient gameSettings.xml, mods et modsCartes)
-      </label>
-      <div style={{ display: "flex", gap: "10px", marginBottom: "6px" }}>
-        <input
-          type="text"
-          className="text-input"
-          value={form.gamePath}
-          onChange={(e) => setField("gamePath", e.target.value)}
-          style={{ flex: 1 }}
-        />
-        <ActionButton onClick={pickFolder}>Parcourir</ActionButton>
-      </div>
-      <div className="hint" style={{ marginBottom: "16px" }}>
-        Par défaut : {settings?.defaultGamePath}
-      </div>
+      <FolderField
+        label="Dossier du jeu (contient gameSettings.xml et les sauvegardes)"
+        value={form.gamePath}
+        hint={`Par défaut : ${settings?.defaultGamePath}`}
+        onChange={(value) => setField("gamePath", value)}
+        onBrowse={() => browse("gamePath", "Choisir le dossier FarmingSimulator2025", form.gamePath)}
+      />
+
+      <FolderField
+        label="Dossier des mods favoris (profil Default)"
+        value={form.modsPath}
+        placeholder={defaultModsPath}
+        hint="Laisser vide pour utiliser le dossier « mods » du jeu."
+        onChange={(value) => setField("modsPath", value)}
+        onBrowse={() => browse("modsPath", "Choisir le dossier des mods favoris", form.modsPath || defaultModsPath)}
+      />
+
+      <FolderField
+        label="Dossier des mods par carte (un sous-dossier par profil)"
+        value={form.profilesPath}
+        placeholder={defaultProfilesPath}
+        hint="Laisser vide pour utiliser le dossier « modsCartes » du jeu. Il doit être sur le même disque que les mods favoris (liens des favoris)."
+        onChange={(value) => setField("profilesPath", value)}
+        onBrowse={() => browse("profilesPath", "Choisir le dossier des mods par carte", form.profilesPath || defaultProfilesPath)}
+      />
 
       <label className="field-label">
         URL de lancement du jeu (bouton « Lancer le jeu »)

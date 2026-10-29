@@ -67,6 +67,17 @@ function parseModAuthor(xml) {
     return authorMatch ? authorMatch[1] : "?";
 }
 
+// Mods requis : <dependencies><dependency>FS25_Xxx</dependency></dependencies>.
+// Les DLC (pdlc_*) sont ignores : ils sont installes avec le jeu, pas dans les dossiers de mods.
+function parseModDependencies(xml) {
+    const block = xml.match(/<dependencies>([\s\S]*?)<\/dependencies>/);
+    if (!block) return [];
+
+    return [...block[1].matchAll(/<dependency[^>]*>\s*([^<]+?)\s*<\/dependency>/g)]
+        .map((match) => match[1])
+        .filter((name) => !name.toLowerCase().startsWith("pdlc_"));
+}
+
 function parseModDesc(zip, modFilePath) {
     const xmlEntry = zip.getEntry('modDesc.xml');
 
@@ -81,6 +92,7 @@ function parseModDesc(zip, modFilePath) {
         version: parseModVersion(xml),
         author: parseModAuthor(xml),
         iconFilename: parseIconFilename(xml),
+        dependencies: parseModDependencies(xml),
         rawXml: xml
     };
 }
@@ -94,7 +106,8 @@ function getModInfo(zip, fileName) {
         name: parsed.name,
         version: parsed.version,
         author: parsed.author,
-        iconFilename: parsed.iconFilename
+        iconFilename: parsed.iconFilename,
+        dependencies: parsed.dependencies
     };
 }
 
@@ -127,7 +140,8 @@ function getModInfoFromDirectory(dirPath, dirName) {
         name: parsed.name,
         version: parsed.version,
         author: parsed.author,
-        iconFilename: parsed.iconFilename
+        iconFilename: parsed.iconFilename,
+        dependencies: parsed.dependencies
     };
 }
 
@@ -139,6 +153,7 @@ module.exports = {
     parseModTitle,
     parseModVersion,
     parseModAuthor,
+    parseModDependencies,
     parseModDesc,
     getModInfo,
     parseModDescFromDirectory,

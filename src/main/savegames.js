@@ -5,9 +5,9 @@ const fs = require('fs');
 const { writeJsonFile } = require('../utils');
 const { DEFAULT_PROFILE, getBasePath, getModsFolder } = require('./settings');
 const { readXmlAttribute, unescapeXml } = require('./game');
-const { listProfiles, readExcludedModsFromProfile } = require('./profiles');
-const { includesFileName } = require('./fsUtils');
+const { readExcludedModsFromProfile } = require('./profiles');
 const { getMods } = require('./mods');
+const { getModNameFromFile, getProfileModNames, findAvailability } = require('./modLocator');
 
 const SAVEGAME_DIR_PATTERN = /^savegame\d+$/i;
 // Fichiers de la partie qui referencent les mods des objets possedes (modName="...")
@@ -104,38 +104,6 @@ function listSavegames() {
     }
 
     return savegames.sort((a, b) => Number(a.id.replace(/\D/g, "")) - Number(b.id.replace(/\D/g, "")));
-}
-
-function getModNameFromFile(fileName) {
-    return fileName.replace(/\.zip$/i, "");
-}
-
-// Noms des mods d'un dossier (zip ou dossier), en minuscules
-function readModNames(folder) {
-    try {
-        return new Set(
-            fs.readdirSync(folder, { withFileTypes: true })
-                .filter((entry) => entry.isDirectory() || entry.name.toLowerCase().endsWith(".zip"))
-                .map((entry) => getModNameFromFile(entry.name).toLowerCase())
-        );
-    } catch {
-        return new Set();
-    }
-}
-
-function getProfileModNames() {
-    const result = { [DEFAULT_PROFILE]: readModNames(getModsFolder(DEFAULT_PROFILE)) };
-
-    let profiles = [];
-    try {
-        profiles = listProfiles();
-    } catch {}
-
-    for (const profile of profiles) {
-        result[profile] = readModNames(getModsFolder(profile));
-    }
-
-    return result;
 }
 
 // Classement des profils candidats : part des mods de la partie presents, puis, a egalite,
@@ -235,21 +203,6 @@ function readModsWithObjects(savegameId) {
     }
 
     return names;
-}
-
-// Ou trouver un mod manquant dans le profil
-function findAvailability(modName, profile, excludedMods, profileModNames) {
-    const lower = modName.toLowerCase();
-
-    if (profile !== DEFAULT_PROFILE && profileModNames[DEFAULT_PROFILE].has(lower)) {
-        const excluded = includesFileName(excludedMods, `${modName}.zip`) || includesFileName(excludedMods, modName);
-        return { type: excluded ? "excluded-favorite" : "favorite" };
-    }
-
-    const otherProfile = Object.keys(profileModNames)
-        .find((name) => name !== profile && name !== DEFAULT_PROFILE && profileModNames[name].has(lower));
-
-    return otherProfile ? { type: "other-profile", profile: otherProfile } : { type: "none" };
 }
 
 function analyzeSavegame(profile, savegameId) {

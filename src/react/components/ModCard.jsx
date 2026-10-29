@@ -109,6 +109,15 @@ export const ModCard = memo(function ModCard({
             </Badge>
           )}
 
+          {mod.missingDependencies?.length > 0 && (
+            <Badge
+              background="#8b2f2f"
+              title={`Mods requis absents de ce profil : ${mod.missingDependencies.map((d) => d.modName).join(", ")}`}
+            >
+              Dépendance manquante
+            </Badge>
+          )}
+
           {mod.isDuplicateCopy && (
             <Badge
               background="#555"
