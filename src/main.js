@@ -7,7 +7,6 @@ const {
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const AdmZip = require('adm-zip');
 const os = require('os');
 const crypto = require('crypto');
 const execFile = require('child_process').execFile;
@@ -16,20 +15,24 @@ const {
     readJsonFile,
     writeJsonFile,
     ensureDir,
-    parseModDesc,
     getModInfo,
-    getModInfoFromDirectory,
-    parseModDescFromDirectory,
-    parseIconFilename
+    getModInfoFromDirectory
 } = require('./utils');
+const { withZip } = require('./zipReader');
 
 const basePath = "C:/Users/Julien/Documents/My Games/FarmingSimulator2025";
 
 const modsCartesPath = path.join(basePath, "modsCartes");
 const conversionLocks = new Map();
 
-const modCache = new Map();
-const MOD_CACHE_TTL = 5 * 60 * 1000;
+// Cache persistant des infos de mods (nom, version, auteur, icone).
+// La cle contient taille + date de modification : une entree n'est jamais perimee,
+// et un favori lie dans un profil partage la meme entree que son original dans Default.
+const MOD_INFO_CACHE_VERSION = 1;
+const MOD_INFO_CACHE_MAX_AGE = 90 * 24 * 60 * 60 * 1000;
+const MOD_INFO_CACHE_TOUCH_INTERVAL = 24 * 60 * 60 * 1000;
+let modInfoCache = null;
+let modInfoCacheSaveTimer = null;
 
 const iconCache = new Map();
 const ICON_CACHE_TTL = 30 * 60 * 1000;
@@ -41,31 +44,78 @@ const registryCache = {
 const excludedModsCache = new Map();
 const REGISTRY_CACHE_TTL = 30 * 1000;
 
-function getModCacheKey(fullPath, mtimeMs) {
-    return `${fullPath}|${mtimeMs}`;
+function getModInfoCachePath() {
+    return path.join(app.getPath('userData'), 'mod-info-cache.json');
 }
 
-function getCachedModInfo(fullPath) {
-    const cached = modCache.get(fullPath);
+function loadModInfoCache() {
+    if (modInfoCache) return modInfoCache;
+
+    modInfoCache = new Map();
+
+    try {
+        const raw = JSON.parse(fs.readFileSync(getModInfoCachePath(), 'utf-8'));
+
+        if (raw && raw.version === MOD_INFO_CACHE_VERSION && raw.entries) {
+            const minSeenAt = Date.now() - MOD_INFO_CACHE_MAX_AGE;
+
+            for (const [key, value] of Object.entries(raw.entries)) {
+                if (value && value.data && value.seenAt >= minSeenAt) {
+                    modInfoCache.set(key, value);
+                }
+            }
+        }
+    } catch {}
+
+    return modInfoCache;
+}
+
+function saveModInfoCache() {
+    if (modInfoCacheSaveTimer) {
+        clearTimeout(modInfoCacheSaveTimer);
+        modInfoCacheSaveTimer = null;
+    }
+
+    if (!modInfoCache) return;
+
+    try {
+        const payload = {
+            version: MOD_INFO_CACHE_VERSION,
+            entries: Object.fromEntries(modInfoCache)
+        };
+        writeJsonFile(getModInfoCachePath(), payload, false);
+    } catch (err) {
+        console.error("Erreur sauvegarde cache mods:", err);
+    }
+}
+
+function scheduleModInfoCacheSave() {
+    if (modInfoCacheSaveTimer) return;
+    modInfoCacheSaveTimer = setTimeout(saveModInfoCache, 2000);
+}
+
+function getModCacheKey(fileName, versionKey) {
+    return `${fileName.toLowerCase()}|${versionKey}`;
+}
+
+function getCachedModInfo(cacheKey) {
+    const cached = loadModInfoCache().get(cacheKey);
     if (!cached) return null;
 
-    if (Date.now() - cached.cachedAt > MOD_CACHE_TTL) {
-        modCache.delete(fullPath);
-        return null;
+    if (Date.now() - cached.seenAt > MOD_INFO_CACHE_TOUCH_INTERVAL) {
+        cached.seenAt = Date.now();
+        scheduleModInfoCacheSave();
     }
 
     return cached.data;
 }
 
-function setCachedModInfo(fullPath, data) {
-    modCache.set(fullPath, {
+function setCachedModInfo(cacheKey, data) {
+    loadModInfoCache().set(cacheKey, {
         data,
-        cachedAt: Date.now()
+        seenAt: Date.now()
     });
-}
-
-function clearModCache() {
-    modCache.clear();
+    scheduleModInfoCacheSave();
 }
 
 function getIconPath() {
@@ -102,16 +152,68 @@ function getIconCacheDir() {
     return dir;
 }
 
-function makeIconCacheName(modFilePath, ddsEntryName) {
-    const fileName = path.basename(modFilePath);
-    const key = `${fileName}|${ddsEntryName}|256`;
-
-    const hash = crypto
+// La cle d'icone derive de la cle du cache des mods : une MAJ du mod donne une nouvelle icone.
+function makeIconKey(modCacheKey, iconFilename) {
+    return crypto
         .createHash('md5')
-        .update(key)
+        .update(`${modCacheKey}|${iconFilename}|256`)
         .digest('hex');
+}
 
-    return `${hash}.png`;
+function toPngDataUrl(buffer) {
+    return `data:image/png;base64,${buffer.toString('base64')}`;
+}
+
+function readCachedIconFile(iconKey) {
+    const pngPath = path.join(getIconCacheDir(), `${iconKey}.png`);
+
+    try {
+        return toPngDataUrl(fs.readFileSync(pngPath));
+    } catch {
+        return null;
+    }
+}
+
+function readZipModIcon(fullPath, iconFile) {
+    return withZip(fullPath, (zip) => {
+        const baseName = iconFile.replace(/\.[^/.]+$/, "");
+
+        let entry = zip.getEntry(baseName + ".dds");
+
+        if (!entry) {
+            entry = zip.getEntry(iconFile);
+        }
+
+        if (!entry) {
+            entry = zip.getEntries().find(e =>
+                    !e.isDirectory &&
+                    e.entryName.toLowerCase().endsWith(baseName.toLowerCase() + ".dds"));
+        }
+
+        return entry ? zip.readEntry(entry) : null;
+    });
+}
+
+function readDirectoryModIcon(fullPath, iconFile) {
+    const baseName = iconFile.replace(/\.[^/.]+$/, "");
+
+    let iconPath = path.join(fullPath, baseName + ".dds");
+    if (!fs.existsSync(iconPath)) {
+        iconPath = path.join(fullPath, iconFile);
+    }
+    if (!fs.existsSync(iconPath)) {
+        const dirFiles = fs.readdirSync(fullPath);
+        const found = dirFiles.find(f =>
+            !fs.statSync(path.join(fullPath, f)).isDirectory() &&
+            f.toLowerCase().endsWith(baseName.toLowerCase() + ".dds"));
+        if (found) {
+            iconPath = path.join(fullPath, found);
+        }
+    }
+
+    if (!fs.existsSync(iconPath)) return null;
+
+    return fs.readFileSync(iconPath);
 }
 
 function getActiveProfileFromXML() {
@@ -144,25 +246,20 @@ function getActiveProfileFromXML() {
     return profileName;
 }
 
-async function convertDdsToPngWithTexconv(ddsBuffer, modFilePath, ddsEntryName) {
+async function convertDdsToPngWithTexconv(ddsBuffer, iconKey) {
     try {
         const texconvPath = getTexconvPath();
 		//console.log("texconv path =", texconvPath);
-		
+
         if (!fs.existsSync(texconvPath)) {
             //console.error("texconv.exe introuvable :", texconvPath);
             return null;
         }
 
         const cacheDir = getIconCacheDir();
-        const cacheFileName = makeIconCacheName(modFilePath, ddsEntryName);
-        const finalPngPath = path.join(cacheDir, cacheFileName);
+        const finalPngPath = path.join(cacheDir, `${iconKey}.png`);
 
-        // 1. Cache disque deja present
-        if (fs.existsSync(finalPngPath)) {
-            const buffer = fs.readFileSync(finalPngPath);
-            return `data:image/png;base64,${buffer.toString('base64')}`;
-        }
+        // 1. Le cache disque est verifie par l'appelant, avant meme d'ouvrir le zip
 
         // 2. Si une conversion est deja en cours pour cette image, on attend son resultat
         if (conversionLocks.has(finalPngPath)) {
@@ -211,8 +308,7 @@ async function convertDdsToPngWithTexconv(ddsBuffer, modFilePath, ddsEntryName) 
                 // 4. Copie vers le cache final (plus fiable que rename)
                 fs.copyFileSync(tempPngPath, finalPngPath);
 
-                const buffer = fs.readFileSync(finalPngPath);
-                return `data:image/png;base64,${buffer.toString('base64')}`;
+                return toPngDataUrl(fs.readFileSync(finalPngPath));
             } catch (err) {
                 console.error("Erreur conversion texconv :", err);
                 return null;
@@ -648,8 +744,7 @@ function copyLocalZipToProfile(sourceZipPath, destinationPath) {
         throw new Error("Le fichier sélectionné doit être un ZIP");
     }
 
-    const zip = new AdmZip(sourceZipPath);
-    const hasModDesc = !!zip.getEntry("modDesc.xml");
+    const hasModDesc = withZip(sourceZipPath, (zip) => !!zip.getEntry("modDesc.xml"));
 
     if (!hasModDesc) {
         throw new Error("Le ZIP sélectionné ne semble pas être un mod FS valide");
@@ -699,8 +794,7 @@ function downloadFile(url, destinationPath) {
                 fileStream.close(() => {
                     try {
                         // verification minimale : le zip doit etre lisible
-                        const zip = new AdmZip(tempPath);
-                        const hasModDesc = !!zip.getEntry("modDesc.xml");
+                        const hasModDesc = withZip(tempPath, (zip) => !!zip.getEntry("modDesc.xml"));
 
                         if (!hasModDesc) {
                             fs.rmSync(tempPath, { force: true });
@@ -998,7 +1092,6 @@ app.whenReady().then(() => {
 
         if (!fs.existsSync(folder)) return [];
 
-        const files = fs.readdirSync(folder);
         const registry = readGithubRegistry();
 	const externalRegistry = readExternalRegistry();
 
@@ -1006,63 +1099,46 @@ app.whenReady().then(() => {
 
         const managedLinks = profile === "Default" ? [] : readManagedLinks(profile);
 
-        const mods = files
-          .filter((f) => {
-            const fullPath = path.join(folder, f);
-            const stat = fs.statSync(fullPath);
-            if (!f.toLowerCase().endsWith(".zip") && !stat.isDirectory()) {
-                return false;
-            }
-            if (stat.isDirectory()) {
-                const modDescPath = path.join(fullPath, "modDesc.xml");
-                return fs.existsSync(modDescPath);
-            }
-            return f.toLowerCase().endsWith(".zip");
-          })
+        const modFiles = fs.readdirSync(folder)
           .map((file) => {
             const fullPath = path.join(folder, file);
-            const stats = fs.statSync(fullPath);
-            const isDirectory = stats.isDirectory();
-            const cacheKey = getModCacheKey(fullPath, stats.mtimeMs);
-
-            let name = file;
-            let version = "?";
-            let author = "?";
-            let iconFilename = null;
-
-            const cached = getCachedModInfo(cacheKey);
-
-            if (cached) {
-              name = cached.name;
-              version = cached.version;
-              author = cached.author;
-              iconFilename = cached.iconFilename;
-            } else if (isDirectory) {
-              try {
-                const modInfo = getModInfoFromDirectory(fullPath, file);
-                name = modInfo.name;
-                version = modInfo.version;
-                author = modInfo.author;
-                iconFilename = modInfo.iconFilename;
-                setCachedModInfo(cacheKey, { name, version, author, iconFilename });
-              } catch (err) {
-                console.error("Erreur lecture mod dossier:", file, err);
+            try {
+              const stats = fs.statSync(fullPath);
+              if (stats.isDirectory()) {
+                // un mod dossier n'est valide qu'avec un modDesc.xml (statSync echoue sinon)
+                const modDescStats = fs.statSync(path.join(fullPath, "modDesc.xml"));
+                return { file, fullPath, stats, isDirectory: true, versionKey: `dir|${modDescStats.mtimeMs}` };
               }
-            } else {
+              if (!file.toLowerCase().endsWith(".zip")) {
+                return null;
+              }
+              return { file, fullPath, stats, isDirectory: false, versionKey: `${stats.size}|${stats.mtimeMs}` };
+            } catch {
+              return null;
+            }
+          })
+          .filter(Boolean);
+
+        const mods = modFiles
+          .map(({ file, fullPath, stats, isDirectory, versionKey }) => {
+            const cacheKey = getModCacheKey(file, versionKey);
+
+            let modInfo = getCachedModInfo(cacheKey);
+
+            if (!modInfo) {
               try {
-                const zip = new AdmZip(fullPath);
-                const modInfo = getModInfo(zip, file);
-
-                name = modInfo.name;
-                version = modInfo.version;
-                author = modInfo.author;
-                iconFilename = modInfo.iconFilename;
-
-                setCachedModInfo(cacheKey, { name, version, author, iconFilename });
+                modInfo = isDirectory
+                  ? getModInfoFromDirectory(fullPath, file)
+                  : withZip(fullPath, (zip) => getModInfo(zip, file));
+                setCachedModInfo(cacheKey, modInfo);
               } catch (err) {
-                console.error("Erreur lecture mod:", file, err);
+                console.error(isDirectory ? "Erreur lecture mod dossier:" : "Erreur lecture mod:", file, err);
+                modInfo = { name: file, version: "?", author: "?" };
               }
             }
+
+            const { name, version, author } = modInfo;
+            const iconFilename = modInfo.iconFilename || null;
 
             const isManagedCommon =
               profile !== "Default" && managedLinks.includes(file);
@@ -1108,7 +1184,7 @@ app.whenReady().then(() => {
               version,
               author,
               iconFilename,
-              icon: null,
+              iconKey: iconFilename ? makeIconKey(cacheKey, iconFilename) : null,
               size: isDirectory ? 0 : stats.size,
               isSymlink: isManagedCommon,
               isDirectory,
@@ -1137,90 +1213,33 @@ app.whenReady().then(() => {
 
     ipcMain.handle('fs25:getModIcon', async(_event, mod) => {
         try {
-            const fullPath = mod.fullPath;
+            const iconKey = String(mod?.iconKey || "");
+            const iconFile = mod?.iconFilename;
 
-            const cached = iconCache.get(fullPath);
+            if (!/^[0-9a-f]{32}$/.test(iconKey) || !iconFile) {
+                return null;
+            }
+
+            const cached = iconCache.get(iconKey);
             if (cached && Date.now() - cached.cachedAt < ICON_CACHE_TTL) {
                 return cached.data;
             }
 
-            if (mod.isDirectory) {
-                const modDescPath = path.join(fullPath, "modDesc.xml");
-                if (!fs.existsSync(modDescPath)) return null;
+            // Cache disque d'abord : on n'ouvre le mod que si l'icone n'a jamais ete convertie
+            let result = readCachedIconFile(iconKey);
 
-                const xml = fs.readFileSync(modDescPath, "utf-8");
-                const iconFile = parseIconFilename(xml);
-                if (!iconFile) return null;
+            if (!result) {
+                const ddsBuffer = mod.isDirectory
+                    ? readDirectoryModIcon(mod.fullPath, iconFile)
+                    : readZipModIcon(mod.fullPath, iconFile);
 
-                const baseName = iconFile.replace(/\.[^/.]+$/, "");
-                const iconDir = path.dirname(path.join(fullPath, iconFile));
+                if (!ddsBuffer) return null;
 
-                let iconPath = path.join(fullPath, baseName + ".dds");
-                if (!fs.existsSync(iconPath)) {
-                    iconPath = path.join(fullPath, iconFile);
-                }
-                if (!fs.existsSync(iconPath)) {
-                    const dirFiles = fs.readdirSync(fullPath);
-                    const found = dirFiles.find(f =>
-                        !fs.statSync(path.join(fullPath, f)).isDirectory() &&
-                        f.toLowerCase().endsWith(baseName.toLowerCase() + ".dds"));
-                    if (found) {
-                        iconPath = path.join(fullPath, found);
-                    }
-                }
-
-                if (!fs.existsSync(iconPath)) return null;
-
-                const ddsBuffer = fs.readFileSync(iconPath);
-                const result = await convertDdsToPngWithTexconv(
-                    ddsBuffer,
-                    fullPath,
-                    path.basename(iconPath));
-
-                if (result) {
-                    iconCache.set(fullPath, { data: result, cachedAt: Date.now() });
-                }
-                return result;
+                result = await convertDdsToPngWithTexconv(ddsBuffer, iconKey);
             }
-
-            const zip = new AdmZip(fullPath);
-            const xmlEntry = zip.getEntry("modDesc.xml");
-
-            if (!xmlEntry)
-                return null;
-
-            const xml = zip.readAsText(xmlEntry);
-            const iconFile = parseIconFilename(xml);
-
-            if (!iconFile)
-                return null;
-
-            const baseName = iconFile.replace(/\.[^/.]+$/, "");
-
-            let entry = zip.getEntry(baseName + ".dds");
-
-            if (!entry) {
-                entry = zip.getEntry(iconFile);
-            }
-
-            if (!entry) {
-                entry = zip.getEntries().find(e =>
-                        !e.isDirectory &&
-                        e.entryName.toLowerCase().endsWith(baseName.toLowerCase() + ".dds"));
-            }
-
-            if (!entry)
-                return null;
-
-            const ddsBuffer = entry.getData();
-
-            const result = await convertDdsToPngWithTexconv(
-                ddsBuffer,
-                fullPath,
-                entry.entryName);
 
             if (result) {
-                iconCache.set(fullPath, { data: result, cachedAt: Date.now() });
+                iconCache.set(iconKey, { data: result, cachedAt: Date.now() });
             }
 
             return result;
@@ -1755,6 +1774,13 @@ if (!managedLinks.includes(fileName)) {
             createWindow();
         }
     });
+});
+
+app.on('will-quit', () => {
+    // sauvegarde immediate si une ecriture differee est en attente
+    if (modInfoCacheSaveTimer) {
+        saveModInfoCache();
+    }
 });
 
 app.on('window-all-closed', () => {

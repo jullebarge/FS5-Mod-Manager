@@ -14,12 +14,12 @@ function readJsonFile(filePath, defaultValue = []) {
     }
 }
 
-function writeJsonFile(filePath, data) {
+function writeJsonFile(filePath, data, pretty = true) {
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    fs.writeFileSync(filePath, JSON.stringify(data, null, pretty ? 2 : 0), 'utf-8');
 }
 
 function ensureDir(dir) {

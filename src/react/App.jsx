@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useRef, useState } from "react";
 
 const colors = {
   bg: "#222222",
@@ -11,6 +11,8 @@ const colors = {
 };
 
 const PLAYNITE_URL = "playnite://playnite/start/11dd1871-0174-46f5-a27d-ef5d1095f121";
+
+const ICON_LOAD_CONCURRENCY = 4;
 
 function Spinner({ size = 40 }) {
   return (
@@ -453,8 +455,10 @@ function ContextMenu({
   );
 }
 
-function ModCard({
+// icon : undefined = en cours de chargement, null = pas d'icone
+const ModCard = memo(function ModCard({
   mod,
+  icon,
   selectedProfile,
   onCardClick
 }) {
@@ -499,9 +503,9 @@ function ModCard({
         {getStatusIcon(mod.status)}
       </div>
 
-      {mod.icon ? (
+      {icon ? (
         <img
-          src={mod.icon}
+          src={icon}
           alt={mod.name}
           style={{
             width: "100%",
@@ -522,7 +526,11 @@ function ModCard({
             justifyContent: "center"
           }}
         >
-          <Spinner size={32} />
+          {icon === undefined ? (
+            <Spinner size={32} />
+          ) : (
+            <span style={{ fontSize: "48px", opacity: 0.3 }}>🧩</span>
+          )}
         </div>
       )}
 
@@ -581,7 +589,7 @@ function ModCard({
       </div>
     </div>
   );
-}
+});
 
 export default function App() {
   const [profiles, setProfiles] = useState([]);
@@ -606,8 +614,11 @@ export default function App() {
   const [showExternalModal, setShowExternalModal] = useState(false);
   const [externalZipPath, setExternalZipPath] = useState("");
   const [externalUrl, setExternalUrl] = useState("");
-  
+  const [icons, setIcons] = useState({});
+
   const requestIdRef = useRef(0);
+  // iconKey deja demandes (ou en cours) : evite les doublons entre profil et Default
+  const iconRequestsRef = useRef(new Set());
 
   function showToast(text, type = "info") {
     const id = Date.now() + Math.random();
@@ -619,14 +630,53 @@ export default function App() {
     }, 3000);
   }
 
-  async function refreshProfileData(profile, requestId) {
-    const list = await window.fs25.getMods(profile);
-    const excluded = await window.fs25.getExcludedMods(profile);
+  async function loadIcons(modsList, requestId) {
+    const pending = new Map();
 
-    let defaultList = [];
-    if (profile !== "Default") {
-      defaultList = await window.fs25.getMods("Default");
+    for (const mod of modsList) {
+      if (mod.iconKey && !iconRequestsRef.current.has(mod.iconKey) && !pending.has(mod.iconKey)) {
+        pending.set(mod.iconKey, mod);
+      }
     }
+
+    const queue = [...pending.values()];
+    for (const mod of queue) {
+      iconRequestsRef.current.add(mod.iconKey);
+    }
+
+    async function worker() {
+      while (queue.length > 0) {
+        if (requestId !== requestIdRef.current) {
+          // requete obsolete : on libere les icones non demandees pour un prochain chargement
+          for (const mod of queue) {
+            iconRequestsRef.current.delete(mod.iconKey);
+          }
+          queue.length = 0;
+          return;
+        }
+
+        const mod = queue.shift();
+        let icon = null;
+
+        try {
+          icon = await window.fs25.getModIcon(mod);
+        } catch (err) {
+          console.error("Erreur chargement icone:", mod.fileName, err);
+        }
+
+        setIcons((prev) => ({ ...prev, [mod.iconKey]: icon }));
+      }
+    }
+
+    await Promise.all(Array.from({ length: ICON_LOAD_CONCURRENCY }, worker));
+  }
+
+  async function refreshProfileData(profile, requestId) {
+    const [list, excluded, defaultList] = await Promise.all([
+      window.fs25.getMods(profile),
+      window.fs25.getExcludedMods(profile),
+      profile !== "Default" ? window.fs25.getMods("Default") : Promise.resolve([])
+    ]);
 
     if (requestId !== requestIdRef.current) return;
 
@@ -635,35 +685,7 @@ export default function App() {
     setDefaultMods(defaultList);
     setLoadingMods(false);
 
-    let modsToLoadIcons = [...list];
-
-    if (filter === "excluded") {
-      modsToLoadIcons.push(...defaultList);
-    }
-
-    modsToLoadIcons = modsToLoadIcons.filter(
-      (mod, index, self) =>
-        index === self.findIndex((m) => m.fileName === mod.fileName)
-    );
-
-    for (const mod of modsToLoadIcons) {
-      if (requestId !== requestIdRef.current) return;
-      if (mod.icon) continue;
-
-      const icon = await window.fs25.getModIcon(mod);
-
-      if (requestId !== requestIdRef.current) return;
-
-      if (icon) {
-        setMods((prev) =>
-          prev.map((m) => (m.fileName === mod.fileName ? { ...m, icon } : m))
-        );
-
-        setDefaultMods((prev) =>
-          prev.map((m) => (m.fileName === mod.fileName ? { ...m, icon } : m))
-        );
-      }
-    }
+    await loadIcons(list, requestId);
   }
 
   useEffect(() => {
@@ -692,7 +714,17 @@ export default function App() {
         setLoadingMods(false);
       }
     });
-  }, [selectedProfile, isInitialized, filter]);
+  }, [selectedProfile, isInitialized]);
+
+  // Les favoris exclus viennent de Default : leurs icones ne sont chargees que si on les affiche
+  useEffect(() => {
+    if (filter !== "excluded") return;
+
+    loadIcons(
+      defaultMods.filter((m) => excludedMods.includes(m.fileName)),
+      requestIdRef.current
+    );
+  }, [filter, defaultMods, excludedMods]);
 
   useEffect(() => {
     function handleKey(e) {
@@ -862,14 +894,14 @@ export default function App() {
     await refreshProfileData(selectedProfile, requestId);
   }
 
-	function handleCardClick(mod, event) {
+	const handleCardClick = useCallback((mod, event) => {
 	  setContextMenu({
 		mod,
 		selectedProfile,
 		x: event.clientX,
 		y: event.clientY
 	  });
-	}
+	}, [selectedProfile]);
 
   async function handleAddGithubMod() {
     const cleanUrl = githubRepoUrl.trim();
@@ -1430,6 +1462,7 @@ export default function App() {
 			<ModCard
 			  key={`${mod.fileName}-${mod.status}`}
 			  mod={mod}
+			  icon={mod.iconKey ? icons[mod.iconKey] : null}
 			  selectedProfile={selectedProfile}
 			  onCardClick={handleCardClick}
 			/>
