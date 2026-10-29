@@ -10,8 +10,6 @@ const colors = {
   border: "#3a3a3a"
 };
 
-const PLAYNITE_URL = "playnite://playnite/start/11dd1871-0174-46f5-a27d-ef5d1095f121";
-
 const ICON_LOAD_CONCURRENCY = 4;
 
 function Spinner({ size = 40 }) {
@@ -335,7 +333,9 @@ function ContextMenu({
   onOpenGithubRepo,
   onUpdateGithubMod,
   onOpenExternalUrl,
-  onOpenModZip
+  onOpenModZip,
+  onPromoteProfileVersion,
+  onRelinkFavorite
 }) {
   if (!menu) return null;
 
@@ -396,6 +396,27 @@ function ContextMenu({
           >
             ✅ Réintégrer dans le profil
           </MenuItem>
+        )}
+
+        {mod.status === "common-linked" && mod.isOutOfSync && (
+          <>
+            <MenuItem
+              onClick={() => {
+                onPromoteProfileVersion(mod);
+                onClose();
+              }}
+            >
+              ⬆ Garder cette version (remonter dans les favoris)
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                onRelinkFavorite(mod);
+                onClose();
+              }}
+            >
+              ⬇ Reprendre la version des favoris
+            </MenuItem>
+          </>
         )}
 
         {mod.github?.repoUrl && (
@@ -585,6 +606,15 @@ const ModCard = memo(function ModCard({
               MAJ dispo
             </Badge>
           )}
+
+          {mod.isOutOfSync && (
+            <Badge
+              background={mod.syncDirection === "profile-newer" ? "#2f6b3a" : "#a86b2a"}
+              title={`Version des favoris : v${mod.defaultVersion || "?"}`}
+            >
+              {mod.syncDirection === "profile-newer" ? "Plus récent que le favori" : "Désynchro"}
+            </Badge>
+          )}
         </div>
       </div>
     </div>
@@ -616,6 +646,13 @@ export default function App() {
   const [externalUrl, setExternalUrl] = useState("");
   const [icons, setIcons] = useState({});
   const [modToDelete, setModToDelete] = useState(null);
+  const [deleteUsage, setDeleteUsage] = useState(null);
+  const [deleteFromProfiles, setDeleteFromProfiles] = useState(true);
+  const [settings, setSettings] = useState(null);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [settingsForm, setSettingsForm] = useState({ gamePath: "", launchUrl: "" });
+  // incremente pour forcer le rechargement complet (ex. apres changement du dossier du jeu)
+  const [reloadToken, setReloadToken] = useState(0);
 
   const requestIdRef = useRef(0);
   // iconKey deja demandes (ou en cours) : evite les doublons entre profil et Default
@@ -697,14 +734,22 @@ export default function App() {
     await loadIcons(list, requestId);
   }
 
+  async function loadProfilesAndSettings() {
+    const [p, active, s] = await Promise.all([
+      window.fs25.getProfiles(),
+      window.fs25.getActiveProfile(),
+      window.fs25.getSettings()
+    ]);
+
+    setProfiles(p);
+    setActiveProfile(active);
+    setSelectedProfile(active);
+    setSettings(s);
+  }
+
   useEffect(() => {
     async function init() {
-      const p = await window.fs25.getProfiles();
-      const active = await window.fs25.getActiveProfile();
-
-      setProfiles(p);
-      setActiveProfile(active);
-      setSelectedProfile(active);
+      await loadProfilesAndSettings();
       setIsInitialized(true);
     }
 
@@ -723,7 +768,7 @@ export default function App() {
         setLoadingMods(false);
       }
     });
-  }, [selectedProfile, isInitialized]);
+  }, [selectedProfile, isInitialized, reloadToken]);
 
   // Les favoris exclus viennent de Default : leurs icones ne sont chargees que si on les affiche
   useEffect(() => {
@@ -740,6 +785,7 @@ export default function App() {
       if (e.key === "Escape") {
         setContextMenu(null);
         setModToDelete(null);
+        setShowSettingsModal(false);
       }
     }
 
@@ -799,6 +845,13 @@ export default function App() {
       showToast(
         `${result.linkedCount} favori(s) copiés, ${result.skippedExcluded} exclus ignorés, ${result.removedDuplicates} doublon(s) remplacé(s)${resynced}`
       );
+      if (result.keptNewerCount > 0) {
+        showToast(
+          `${result.keptNewerCount} favori(s) plus récent(s) dans le profil conservé(s) : utilise « Garder cette version » pour les remonter dans les favoris`,
+          "info",
+          8000
+        );
+      }
       showErrorList(
         `${result.errors.length} favori(s) non traité(s) (jeu lancé ?)`,
         result.errors
@@ -898,10 +951,28 @@ export default function App() {
     await refreshProfileData(selectedProfile, requestId);
   }
 
-  async function handleDeleteLocalMod(mod) {
+  async function openDeleteConfirm(mod) {
+    setModToDelete(mod);
+    setDeleteUsage(null);
+    setDeleteFromProfiles(true);
+
+    // dans Default, un mod peut etre un favori lie dans d'autres profils
+    if (selectedProfile === "Default" && !mod.isDirectory) {
+      const usage = await window.fs25.getFavoriteUsage(mod.fileName);
+      setDeleteUsage(usage);
+    }
+  }
+
+  function closeDeleteConfirm() {
+    setModToDelete(null);
+    setDeleteUsage(null);
+  }
+
+  async function handleDeleteLocalMod(mod, options = {}) {
     const result = await window.fs25.deleteLocalMod(
       selectedProfile,
-      mod.fileName
+      mod.fileName,
+      options
     );
 
     if (!result.success) {
@@ -909,11 +980,93 @@ export default function App() {
       return;
     }
 
-    showToast(`${mod.name} déplacé dans la corbeille`, "success");
+    if (result.removedFromProfiles > 0) {
+      showToast(
+        `${mod.name} déplacé dans la corbeille et retiré de ${result.removedFromProfiles} profil(s)`,
+        "success"
+      );
+    } else {
+      showToast(`${mod.name} déplacé dans la corbeille`, "success");
+    }
+    showErrorList("Non retiré de certains profils", result.profileErrors);
 
     const requestId = ++requestIdRef.current;
     setLoadingMods(true);
     await refreshProfileData(selectedProfile, requestId);
+  }
+
+  async function handlePromoteProfileVersion(mod) {
+    const result = await window.fs25.promoteProfileVersion(selectedProfile, mod.fileName);
+
+    if (!result.success) {
+      showToast(`Erreur : ${result.error}`, "error");
+      return;
+    }
+
+    showToast(
+      `${mod.name} v${mod.version} remonté dans les favoris et relié dans ${result.relinkedCount} profil(s)`,
+      "success"
+    );
+    showErrorList("Liens non mis à jour", result.errors);
+
+    const requestId = ++requestIdRef.current;
+    setLoadingMods(true);
+    await refreshProfileData(selectedProfile, requestId);
+  }
+
+  async function handleRelinkFavorite(mod) {
+    const result = await window.fs25.relinkFavorite(selectedProfile, mod.fileName);
+
+    if (!result.success) {
+      showToast(`Erreur : ${result.error}`, "error");
+      return;
+    }
+
+    showToast(`${mod.name} : version des favoris reprise (v${mod.defaultVersion || "?"})`, "success");
+
+    const requestId = ++requestIdRef.current;
+    setLoadingMods(true);
+    await refreshProfileData(selectedProfile, requestId);
+  }
+
+  function openSettings() {
+    setSettingsForm({
+      gamePath: settings?.gamePath || "",
+      launchUrl: settings?.launchUrl || ""
+    });
+    setShowSettingsModal(true);
+  }
+
+  async function handlePickGameFolder() {
+    const result = await window.fs25.pickGameFolder();
+
+    if (!result.success) {
+      if (!result.canceled) {
+        showToast(`Erreur : ${result.error}`, "error");
+      }
+      return;
+    }
+
+    setSettingsForm((prev) => ({ ...prev, gamePath: result.folderPath }));
+  }
+
+  async function handleSaveSettings() {
+    const result = await window.fs25.saveSettings(settingsForm);
+
+    if (!result.success) {
+      showToast(`Erreur : ${result.error}`, "error");
+      return;
+    }
+
+    setShowSettingsModal(false);
+    showToast("Réglages enregistrés", "success");
+    if (result.warning) {
+      showToast(result.warning, "error", 10000);
+    }
+
+    setFilter("all");
+    await loadProfilesAndSettings();
+    setReloadToken((t) => t + 1);
   }
 
 	const handleCardClick = useCallback((mod, event) => {
@@ -1025,7 +1178,7 @@ export default function App() {
   }
   
   async function handleLaunchGame() {
-    const result = await window.fs25.launchGame(PLAYNITE_URL);
+    const result = await window.fs25.launchGame();
 
     if (!result.success) {
       showToast(`Erreur : ${result.error}`, "error");
@@ -1276,8 +1429,16 @@ export default function App() {
 			  Rafraîchir
 			</ActionButton>
 			
-			<ActionButton onClick={handleLaunchGame}>
+			<ActionButton
+			  onClick={handleLaunchGame}
+			  disabled={!settings?.launchUrl}
+			  title={settings?.launchUrl ? settings.launchUrl : "Aucune URL de lancement : voir Réglages"}
+			>
 			  Lancer le jeu
+			</ActionButton>
+
+			<ActionButton onClick={openSettings}>
+			  ⚙ Réglages
 			</ActionButton>
 		  </div>
 
@@ -1362,13 +1523,50 @@ export default function App() {
               color: "#ffd28a"
             }}
           >
-            <div style={{ fontWeight: 700, marginBottom: "6px" }}>
+            <div style={{ fontWeight: 700, marginBottom: "8px" }}>
               {outOfSyncFavorites.length} favori(s) désynchronisé(s) :
             </div>
 
-            <div style={{ fontSize: "13px", lineHeight: "1.4" }}>
-              {outOfSyncFavorites.slice(0, 10).map(m => m.name).join(", ")}
-              {outOfSyncFavorites.length > 10 && " ..."}
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px" }}>
+              {outOfSyncFavorites.slice(0, 10).map((m) => {
+                const profileNewer = m.syncDirection === "profile-newer";
+
+                return (
+                  <div
+                    key={m.fileName}
+                    style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}
+                  >
+                    <span style={{ fontWeight: 600 }}>{m.name}</span>
+                    <span style={{ opacity: 0.85 }}>
+                      profil v{m.version} · favoris v{m.defaultVersion || "?"}
+                      {profileNewer ? " (profil plus récent)" : ""}
+                    </span>
+                    <ActionButton
+                      onClick={() => handlePromoteProfileVersion(m)}
+                      title="Remplace la version des favoris (Default) par celle de ce profil, puis relie tous les profils qui l'utilisent"
+                      style={{
+                        padding: "4px 10px",
+                        fontSize: "12px",
+                        ...(profileNewer ? {} : { background: "#555", color: "#fff" })
+                      }}
+                    >
+                      ⬆ Garder celle du profil
+                    </ActionButton>
+                    <ActionButton
+                      onClick={() => handleRelinkFavorite(m)}
+                      title="Remplace la copie de ce profil par la version des favoris (l'ancienne copie part à la corbeille)"
+                      style={{
+                        padding: "4px 10px",
+                        fontSize: "12px",
+                        ...(profileNewer ? { background: "#555", color: "#fff" } : {})
+                      }}
+                    >
+                      ⬇ Reprendre celle des favoris
+                    </ActionButton>
+                  </div>
+                );
+              })}
+              {outOfSyncFavorites.length > 10 && <div>...</div>}
             </div>
           </div>
         )}
@@ -1703,9 +1901,32 @@ export default function App() {
               </div>
             )}
 
-            {isDefaultProfile && (
-              <div style={{ fontSize: "12px", opacity: 0.7, lineHeight: "1.4", marginBottom: "16px" }}>
-                S'il s'agit d'un favori, les profils qui l'utilisent garderont leur copie liée.
+            {isDefaultProfile && !modToDelete.isDirectory && !deleteUsage && (
+              <div style={{ fontSize: "12px", opacity: 0.7, marginBottom: "16px" }}>
+                Recherche des profils qui utilisent ce favori...
+              </div>
+            )}
+
+            {deleteUsage && deleteUsage.linked.length > 0 && (
+              <div style={{ fontSize: "13px", lineHeight: "1.4", marginBottom: "16px" }}>
+                <div style={{ marginBottom: "8px" }}>
+                  Ce favori est lié dans {deleteUsage.linked.length} profil(s) :{" "}
+                  <strong>{deleteUsage.linked.join(", ")}</strong>
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={deleteFromProfiles}
+                    onChange={(e) => setDeleteFromProfiles(e.target.checked)}
+                  />
+                  Le retirer aussi de ces profils
+                </label>
+              </div>
+            )}
+
+            {deleteUsage && deleteUsage.linked.length === 0 && (
+              <div style={{ fontSize: "12px", opacity: 0.7, marginBottom: "16px" }}>
+                Aucun profil n'utilise ce mod comme favori.
               </div>
             )}
 
@@ -1716,20 +1937,111 @@ export default function App() {
                 justifyContent: "flex-end"
               }}
             >
-              <ActionButton onClick={() => setModToDelete(null)}>
+              <ActionButton onClick={closeDeleteConfirm}>
                 Annuler
               </ActionButton>
 
               <ActionButton
+                disabled={isDefaultProfile && !modToDelete.isDirectory && !deleteUsage}
                 onClick={() => {
                   const mod = modToDelete;
-                  setModToDelete(null);
-                  handleDeleteLocalMod(mod);
+                  const removeFromProfiles = !!deleteUsage && deleteUsage.linked.length > 0 && deleteFromProfiles;
+                  closeDeleteConfirm();
+                  handleDeleteLocalMod(mod, { removeFromProfiles });
                 }}
                 style={{ background: "#d9534f", color: "#fff" }}
               >
                 Supprimer
               </ActionButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSettingsModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.65)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            zIndex: 1000
+          }}
+        >
+          <div
+            style={{
+              background: colors.panel,
+              border: `1px solid ${colors.border}`,
+              borderRadius: "12px",
+              padding: "24px",
+              width: "560px",
+              boxSizing: "border-box"
+            }}
+          >
+            <h3 style={{ marginTop: 0, marginBottom: "16px" }}>Réglages</h3>
+
+            <label style={{ display: "block", fontSize: "13px", marginBottom: "6px" }}>
+              Dossier du jeu (contient gameSettings.xml, mods et modsCartes)
+            </label>
+            <div style={{ display: "flex", gap: "10px", marginBottom: "6px" }}>
+              <input
+                type="text"
+                value={settingsForm.gamePath}
+                onChange={(e) => setSettingsForm((prev) => ({ ...prev, gamePath: e.target.value }))}
+                style={{
+                  flex: 1,
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  border: `1px solid ${colors.border}`,
+                  background: colors.panel2,
+                  color: colors.text,
+                  fontSize: "14px",
+                  boxSizing: "border-box"
+                }}
+              />
+              <ActionButton onClick={handlePickGameFolder}>Parcourir</ActionButton>
+            </div>
+            <div style={{ fontSize: "12px", opacity: 0.7, marginBottom: "16px" }}>
+              Par défaut : {settings?.defaultGamePath}
+            </div>
+
+            <label style={{ display: "block", fontSize: "13px", marginBottom: "6px" }}>
+              URL de lancement du jeu (bouton « Lancer le jeu »)
+            </label>
+            <input
+              type="text"
+              value={settingsForm.launchUrl}
+              onChange={(e) => setSettingsForm((prev) => ({ ...prev, launchUrl: e.target.value }))}
+              placeholder="playnite://playnite/start/<id> ou steam://rungameid/<id>"
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: "8px",
+                border: `1px solid ${colors.border}`,
+                background: colors.panel2,
+                color: colors.text,
+                fontSize: "14px",
+                boxSizing: "border-box",
+                marginBottom: "6px"
+              }}
+            />
+            <div style={{ fontSize: "12px", opacity: 0.7, lineHeight: "1.4", marginBottom: "16px" }}>
+              Laisser vide pour désactiver le bouton.
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: "10px",
+                justifyContent: "flex-end"
+              }}
+            >
+              <ActionButton onClick={() => setShowSettingsModal(false)}>
+                Annuler
+              </ActionButton>
+              <ActionButton onClick={handleSaveSettings}>Enregistrer</ActionButton>
             </div>
           </div>
         </div>
@@ -1885,7 +2197,9 @@ export default function App() {
 	  menu={contextMenu}
 	  onClose={() => setContextMenu(null)}
 	  onPromote={handlePromoteToCommon}
-	  onDelete={setModToDelete}
+	  onDelete={openDeleteConfirm}
+	  onPromoteProfileVersion={handlePromoteProfileVersion}
+	  onRelinkFavorite={handleRelinkFavorite}
 	  onToggleExcluded={handleToggleExcluded}
 	  onOpenGithubRepo={handleOpenGithubRepo}
 	  onUpdateGithubMod={handleUpdateGithubMod}

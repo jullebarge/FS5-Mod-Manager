@@ -20,9 +20,11 @@ const {
 } = require('./utils');
 const { withZip } = require('./zipReader');
 
-const basePath = "C:/Users/Julien/Documents/My Games/FarmingSimulator2025";
+// URL de lancement utilisee avant l'ecran de reglages : reprise si aucun settings.json n'existe
+const LEGACY_LAUNCH_URL = "playnite://playnite/start/11dd1871-0174-46f5-a27d-ef5d1095f121";
+const LAUNCH_URL_PATTERN = /^(playnite|steam):\/\//i;
+let settingsCache = null;
 
-const modsCartesPath = path.join(basePath, "modsCartes");
 const conversionLocks = new Map();
 
 // Cache persistant des infos de mods (nom, version, auteur, icone).
@@ -126,12 +128,51 @@ function getIconPath() {
     return path.join(process.resourcesPath, 'assets', 'icon.ico');
 }
 
+function getSettingsPath() {
+    return path.join(app.getPath('userData'), 'settings.json');
+}
+
+function getDefaultGamePath() {
+    return path.join(app.getPath('documents'), 'My Games', 'FarmingSimulator2025');
+}
+
+function loadSettings() {
+    if (settingsCache) return settingsCache;
+
+    let stored = null;
+    try {
+        stored = JSON.parse(fs.readFileSync(getSettingsPath(), 'utf-8'));
+    } catch {}
+
+    settingsCache = {
+        gamePath: (stored && stored.gamePath) || getDefaultGamePath(),
+        launchUrl: stored ? (stored.launchUrl || "") : LEGACY_LAUNCH_URL
+    };
+
+    return settingsCache;
+}
+
+function saveSettings(settings) {
+    writeJsonFile(getSettingsPath(), settings);
+    settingsCache = settings;
+    // les caches indexes par nom de profil pointaient sur l'ancien dossier du jeu
+    excludedModsCache.clear();
+}
+
+function getBasePath() {
+    return loadSettings().gamePath;
+}
+
+function getModsCartesPath() {
+    return path.join(getBasePath(), "modsCartes");
+}
+
 function getModsFolder(profileName) {
     if (!profileName || profileName === "Default" || profileName === "...") {
-        return path.join(basePath, "mods");
+        return path.join(getBasePath(), "mods");
     }
 
-    return path.join(modsCartesPath, profileName);
+    return path.join(getModsCartesPath(), profileName);
 }
 
 function getTexconvPath() {
@@ -217,7 +258,7 @@ function readDirectoryModIcon(fullPath, iconFile) {
 }
 
 function getActiveProfileFromXML() {
-    const gameSettingsPath = path.join(basePath, "gameSettings.xml");
+    const gameSettingsPath = path.join(getBasePath(), "gameSettings.xml");
 
     if (!fs.existsSync(gameSettingsPath)) {
         return "Default";
@@ -589,11 +630,135 @@ function isSameFile(pathA, pathB) {
     }
 }
 
+function readModInfo(file, fullPath, isDirectory, cacheKey) {
+    let modInfo = getCachedModInfo(cacheKey);
+    if (modInfo) return modInfo;
+
+    try {
+        modInfo = isDirectory
+            ? getModInfoFromDirectory(fullPath, file)
+            : withZip(fullPath, (zip) => getModInfo(zip, file));
+        setCachedModInfo(cacheKey, modInfo);
+    } catch (err) {
+        console.error(isDirectory ? "Erreur lecture mod dossier:" : "Erreur lecture mod:", file, err);
+        modInfo = { name: file, version: "?", author: "?" };
+    }
+
+    return modInfo;
+}
+
+function readZipModVersion(file, fullPath, stats) {
+    const cacheKey = getModCacheKey(file, `${stats.size}|${stats.mtimeMs}`);
+    return readModInfo(file, fullPath, false, cacheKey).version;
+}
+
+// Compare deux versions de mod ("1.2.0.1"...) : >0 si a est plus recente, 0 si egales ou illisibles
+function compareModVersions(a, b) {
+    const partsA = String(a || "").match(/\d+/g);
+    const partsB = String(b || "").match(/\d+/g);
+    if (!partsA || !partsB) return 0;
+
+    const length = Math.max(partsA.length, partsB.length);
+    for (let i = 0; i < length; i++) {
+        const diff = Number(partsA[i] || 0) - Number(partsB[i] || 0);
+        if (diff !== 0) return diff;
+    }
+    return 0;
+}
+
+// Etat d'un favori lie dans un profil par rapport a son original dans Default.
+// direction : "profile-newer" quand le profil a une version plus recente (MAJ faite par le jeu),
+// "default-newer" sinon. A version egale, la date de modification departage.
+function getFavoriteSyncState(profilePath, defaultPath, fileName) {
+    const state = { outOfSync: false, direction: null, defaultVersion: null };
+
+    let profileStats;
+    let defaultStats;
+    try {
+        profileStats = fs.statSync(profilePath);
+        defaultStats = fs.statSync(defaultPath);
+    } catch {
+        return state;
+    }
+
+    if (isSameFile(defaultPath, profilePath)) {
+        return state;
+    }
+
+    const profileVersion = readZipModVersion(fileName, profilePath, profileStats);
+    const defaultVersion = readZipModVersion(fileName, defaultPath, defaultStats);
+
+    let comparison = compareModVersions(profileVersion, defaultVersion);
+    if (comparison === 0) {
+        comparison = profileStats.mtimeMs - defaultStats.mtimeMs;
+    }
+
+    state.outOfSync = true;
+    state.direction = comparison > 0 ? "profile-newer" : "default-newer";
+    state.defaultVersion = defaultVersion;
+    return state;
+}
+
+// Profils qui lient (ou excluent) un favori de Default
+function getFavoriteUsage(fileName) {
+    const usage = { linked: [], excluded: [] };
+
+    let profiles = [];
+    try {
+        profiles = listProfiles();
+    } catch {
+        return usage;
+    }
+
+    for (const profile of profiles) {
+        if (readManagedLinks(profile).some((f) => sameFileName(f, fileName))) {
+            usage.linked.push(profile);
+        }
+        if (readExcludedModsFromProfile(profile).some((f) => sameFileName(f, fileName))) {
+            usage.excluded.push(profile);
+        }
+    }
+
+    return usage;
+}
+
+// Retire un favori supprime de Default de tous les profils : lien physique, liens geres, exclusions
+function removeFavoriteFromProfiles(fileName) {
+    const result = { removedCount: 0, errors: [] };
+    const usage = getFavoriteUsage(fileName);
+
+    for (const profile of usage.linked) {
+        const managed = readManagedLinks(profile);
+        const entry = managed.find((f) => sameFileName(f, fileName));
+
+        try {
+            fs.rmSync(path.join(getModsFolder(profile), entry), { force: true });
+            writeManagedLinks(profile, managed.filter((f) => f !== entry));
+            result.removedCount++;
+        } catch (err) {
+            result.errors.push(`${profile} : ${describeFsError(err)}`);
+        }
+    }
+
+    for (const profile of usage.excluded) {
+        try {
+            writeExcludedModsToProfile(
+                profile,
+                readExcludedModsFromProfile(profile).filter((f) => !sameFileName(f, fileName))
+            );
+        } catch (err) {
+            result.errors.push(`${profile} : ${describeFsError(err)}`);
+        }
+    }
+
+    return result;
+}
+
 function listProfiles() {
     return fs
-        .readdirSync(modsCartesPath)
+        .readdirSync(getModsCartesPath())
         .filter((name) => {
-            const fullPath = path.join(modsCartesPath, name);
+            const fullPath = path.join(getModsCartesPath(), name);
             return fs.statSync(fullPath).isDirectory();
         });
 }
@@ -974,7 +1139,7 @@ app.whenReady().then(() => {
 
     ipcMain.handle('fs25:setActiveProfile', async(_event, profileName) => {
         try {
-            const xmlPath = path.join(basePath, "gameSettings.xml");
+            const xmlPath = path.join(getBasePath(), "gameSettings.xml");
             let content = fs.readFileSync(xmlPath, 'utf-8');
 
             if (profileName === "Default") {
@@ -982,7 +1147,7 @@ app.whenReady().then(() => {
                         /<modsDirectoryOverride\s+active="[^"]*"\s+directory="[^"]*"\s*\/>/,
                         '<modsDirectoryOverride active="false" directory="" />');
             } else {
-                const profilePath = path.join(basePath, "modsCartes", profileName).replace(/\\/g, "/");
+                const profilePath = path.join(getModsCartesPath(), profileName).replace(/\\/g, "/");
 
                 content = content.replace(
                         /<modsDirectoryOverride\s+active="[^"]*"\s+directory="[^"]*"\s*\/>/,
@@ -1013,7 +1178,7 @@ app.whenReady().then(() => {
                 };
             }
 
-            const newPath = path.join(modsCartesPath, cleanName);
+            const newPath = path.join(getModsCartesPath(), cleanName);
 
             if (fs.existsSync(newPath)) {
                 return {
@@ -1223,20 +1388,7 @@ app.whenReady().then(() => {
         const mods = modFiles
           .map(({ file, fullPath, stats, isDirectory, versionKey }) => {
             const cacheKey = getModCacheKey(file, versionKey);
-
-            let modInfo = getCachedModInfo(cacheKey);
-
-            if (!modInfo) {
-              try {
-                modInfo = isDirectory
-                  ? getModInfoFromDirectory(fullPath, file)
-                  : withZip(fullPath, (zip) => getModInfo(zip, file));
-                setCachedModInfo(cacheKey, modInfo);
-              } catch (err) {
-                console.error(isDirectory ? "Erreur lecture mod dossier:" : "Erreur lecture mod:", file, err);
-                modInfo = { name: file, version: "?", author: "?" };
-              }
-            }
+            const modInfo = readModInfo(file, fullPath, isDirectory, cacheKey);
 
             const { name, version, author } = modInfo;
             const iconFilename = modInfo.iconFilename || null;
@@ -1271,10 +1423,14 @@ app.whenReady().then(() => {
             );
 
             let isOutOfSync = false;
+            let syncDirection = null;
+            let defaultVersion = null;
             if (isManagedCommon && !isDirectory) {
                 const defaultPath = path.join(getModsFolder("Default"), file);
-                // un lien a jour pointe sur le meme fichier physique que l'original
-                isOutOfSync = fs.existsSync(defaultPath) && !isSameFile(defaultPath, fullPath);
+                const syncState = getFavoriteSyncState(fullPath, defaultPath, file);
+                isOutOfSync = syncState.outOfSync;
+                syncDirection = syncState.direction;
+                defaultVersion = syncState.defaultVersion;
             }
 
             return {
@@ -1288,6 +1444,8 @@ app.whenReady().then(() => {
               isSymlink: isManagedCommon,
               isDirectory,
               isOutOfSync,
+              syncDirection,
+              defaultVersion,
               status,
               fullPath,
               github: buildGithubMeta(trackedEntry),
@@ -1391,6 +1549,7 @@ app.whenReady().then(() => {
 		const errors = [];
 		let linkedCount = 0;
 		let resyncedCount = 0;
+		let keptNewerCount = 0;
 		let removedDuplicates = 0;
 
 		// 1. Retirer les anciens liens gérés qui ne sont plus des favoris à lier
@@ -1416,6 +1575,13 @@ app.whenReady().then(() => {
 			  if (isSameFile(sourcePath, targetPath)) {
 				newManaged.push(file);
 				linkedCount++;
+				continue;
+			  }
+
+			  // favori mis à jour par le jeu dans ce profil : on ne l'écrase pas avec l'ancienne version
+			  if (wasManaged && getFavoriteSyncState(targetPath, sourcePath, file).direction === "profile-newer") {
+				newManaged.push(file);
+				keptNewerCount++;
 				continue;
 			  }
 
@@ -1448,6 +1614,7 @@ app.whenReady().then(() => {
 		  success: true,
 		  linkedCount,
 		  resyncedCount,
+		  keptNewerCount,
 		  skippedExcluded,
 		  removedDuplicates,
 		  errors
@@ -1645,7 +1812,16 @@ if (!managedLinks.includes(fileName)) {
 	  }
 	});
 
-	ipcMain.handle('fs25:deleteLocalMod', async (_event, profile, fileName) => {
+	ipcMain.handle('fs25:getFavoriteUsage', async (_event, fileName) => {
+	  try {
+		return getFavoriteUsage(fileName);
+	  } catch (err) {
+		console.error("Erreur getFavoriteUsage:", err);
+		return { linked: [], excluded: [] };
+	  }
+	});
+
+	ipcMain.handle('fs25:deleteLocalMod', async (_event, profile, fileName, options = {}) => {
 	  try {
 		const profileDir = getModsFolder(profile);
 		const filePath = path.join(profileDir, fileName);
@@ -1658,8 +1834,16 @@ if (!managedLinks.includes(fileName)) {
 		await shell.trashItem(filePath);
 		removeGithubRegistryEntry(profile, fileName);
 		removeExternalRegistryEntry(profile, fileName);
-		 
-		return { success: true };
+
+		const cleanup = profile === "Default" && options.removeFromProfiles
+		  ? removeFavoriteFromProfiles(fileName)
+		  : { removedCount: 0, errors: [] };
+
+		return {
+		  success: true,
+		  removedFromProfiles: cleanup.removedCount,
+		  profileErrors: cleanup.errors
+		};
 
 	  } catch (err) {
 		console.error("Erreur deleteLocalMod:", err);
@@ -1777,12 +1961,151 @@ if (!managedLinks.includes(fileName)) {
         }
     });
 
-    ipcMain.handle("fs25:launchGame", async (_event, playniteUrl) => {
-        try {
-            const url = String(playniteUrl || "").trim();
+    // Remonte dans Default la version d'un favori mise a jour dans un profil (MAJ faite par le jeu),
+    // puis relie tous les profils qui l'utilisent a cette version.
+    ipcMain.handle("fs25:promoteProfileVersion", async (_event, profile, fileName) => {
+        const tempPath = path.join(getModsFolder("Default"), `${fileName}.sync-tmp`);
 
-            if (!url.startsWith("playnite://")) {
-                return { success: false, error: "URL Playnite invalide" };
+        try {
+            if (!profile || profile === "Default") {
+                return { success: false, error: "Action impossible sur Default" };
+            }
+
+            const profilePath = path.join(getModsFolder(profile), fileName);
+            const defaultPath = path.join(getModsFolder("Default"), fileName);
+
+            if (!fs.existsSync(profilePath)) {
+                return { success: false, error: "Mod introuvable dans le profil" };
+            }
+            if (!fs.existsSync(defaultPath)) {
+                return { success: false, error: "Mod favori introuvable dans Default" };
+            }
+            if (!readManagedLinks(profile).some((f) => sameFileName(f, fileName))) {
+                return { success: false, error: "Ce mod n'est pas un favori lié" };
+            }
+            if (isSameFile(profilePath, defaultPath)) {
+                return { success: true, relinkedCount: 0, errors: [] };
+            }
+
+            // lien temporaire puis remplacement : Default n'est jamais sans fichier
+            fs.rmSync(tempPath, { force: true });
+            fs.linkSync(profilePath, tempPath);
+            fs.renameSync(tempPath, defaultPath);
+
+            const relink = relinkFavoriteInProfiles(fileName, fileName);
+
+            return {
+                success: true,
+                relinkedCount: relink.relinkedCount,
+                errors: relink.errors
+            };
+        } catch (err) {
+            try {
+                fs.rmSync(tempPath, { force: true });
+            } catch {}
+            console.error("Erreur promoteProfileVersion:", err);
+            return { success: false, error: describeFsError(err) };
+        }
+    });
+
+    // Remplace la copie d'un favori dans un profil par la version de Default
+    ipcMain.handle("fs25:relinkFavorite", async (_event, profile, fileName) => {
+        try {
+            if (!profile || profile === "Default") {
+                return { success: false, error: "Action impossible sur Default" };
+            }
+
+            const profilePath = path.join(getModsFolder(profile), fileName);
+            const defaultPath = path.join(getModsFolder("Default"), fileName);
+
+            if (!fs.existsSync(defaultPath)) {
+                return { success: false, error: "Mod favori introuvable dans Default" };
+            }
+
+            if (fs.existsSync(profilePath) && !isSameFile(profilePath, defaultPath)) {
+                // la copie du profil n'existe peut-etre nulle part ailleurs : corbeille
+                await shell.trashItem(profilePath);
+            }
+            if (!fs.existsSync(profilePath)) {
+                fs.linkSync(defaultPath, profilePath);
+            }
+
+            const managed = readManagedLinks(profile);
+            if (!managed.some((f) => sameFileName(f, fileName))) {
+                managed.push(fileName);
+                writeManagedLinks(profile, managed);
+            }
+
+            return { success: true };
+        } catch (err) {
+            console.error("Erreur relinkFavorite:", err);
+            return { success: false, error: describeFsError(err) };
+        }
+    });
+
+    ipcMain.handle("fs25:getSettings", async () => {
+        const settings = loadSettings();
+        return {
+            ...settings,
+            defaultGamePath: getDefaultGamePath()
+        };
+    });
+
+    ipcMain.handle("fs25:saveSettings", async (_event, input) => {
+        try {
+            const gamePath = String(input?.gamePath || "").trim();
+            const launchUrl = String(input?.launchUrl || "").trim();
+
+            if (!gamePath || !fs.existsSync(gamePath) || !fs.statSync(gamePath).isDirectory()) {
+                return { success: false, error: "Dossier du jeu introuvable" };
+            }
+            if (launchUrl && !LAUNCH_URL_PATTERN.test(launchUrl)) {
+                return { success: false, error: "L'URL de lancement doit commencer par playnite:// ou steam://" };
+            }
+
+            saveSettings({ gamePath, launchUrl });
+
+            return {
+                success: true,
+                warning: fs.existsSync(path.join(gamePath, "gameSettings.xml"))
+                    ? null
+                    : "gameSettings.xml introuvable dans ce dossier : est-ce bien le dossier FarmingSimulator2025 ?"
+            };
+        } catch (err) {
+            console.error("Erreur saveSettings:", err);
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("fs25:pickGameFolder", async () => {
+        try {
+            const result = await dialog.showOpenDialog({
+                title: "Choisir le dossier FarmingSimulator2025",
+                defaultPath: getBasePath(),
+                properties: ["openDirectory"]
+            });
+
+            if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+                return { success: false, canceled: true };
+            }
+
+            return { success: true, folderPath: result.filePaths[0] };
+        } catch (err) {
+            console.error("Erreur pickGameFolder:", err);
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle("fs25:launchGame", async () => {
+        try {
+            const url = String(loadSettings().launchUrl || "").trim();
+
+            if (!url) {
+                return { success: false, error: "Aucune URL de lancement configurée (voir Réglages)" };
+            }
+
+            if (!LAUNCH_URL_PATTERN.test(url)) {
+                return { success: false, error: "URL de lancement invalide" };
             }
 
             await shell.openExternal(url);
