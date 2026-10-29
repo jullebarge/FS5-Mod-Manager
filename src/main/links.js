@@ -3,7 +3,7 @@ const { shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { DEFAULT_PROFILE, getModsFolder } = require('./settings');
-const { sameFileName, includesFileName, describeFsError, isSameFile } = require('./fsUtils');
+const { sameFileName, includesFileName, describeFsError, isSameFile, haveSameContent } = require('./fsUtils');
 const {
     listProfiles,
     readManagedLinks,
@@ -43,7 +43,7 @@ function compareModVersions(a, b) {
 // direction : "profile-newer" quand le profil a une version plus recente (MAJ faite par le jeu),
 // "default-newer" sinon. A version egale, la date de modification departage.
 function getFavoriteSyncState(profilePath, defaultPath, fileName) {
-    const state = { outOfSync: false, direction: null, defaultVersion: null };
+    const state = { outOfSync: false, isDuplicateCopy: false, direction: null, defaultVersion: null };
 
     let profileStats;
     let defaultStats;
@@ -55,6 +55,16 @@ function getFavoriteSyncState(profilePath, defaultPath, fileName) {
     }
 
     if (isSameFile(defaultPath, profilePath)) {
+        return state;
+    }
+
+    // meme taille, meme date (a la seconde, selon l'outil de copie) et meme contenu : copie identique
+    // du favori, copiee au lieu d'etre liee, pas une autre version. "Copier les favoris" la remplacera
+    // par un lien. Le contenu n'est compare que pour ces rares candidats.
+    if (profileStats.size === defaultStats.size &&
+        Math.floor(profileStats.mtimeMs / 1000) === Math.floor(defaultStats.mtimeMs / 1000) &&
+        haveSameContent(profilePath, defaultPath)) {
+        state.isDuplicateCopy = true;
         return state;
     }
 
@@ -379,6 +389,32 @@ function toggleExcludedMod(profile, fileName) {
     return { success: true, excluded: false };
 }
 
+// Exclut plusieurs favoris lies d'un coup (nettoyage depuis l'analyse des sauvegardes)
+function excludeFavorites(profile, fileNames) {
+    const refused = rejectDefault(profile);
+    if (refused) return refused;
+
+    const errors = [];
+    let excludedCount = 0;
+
+    for (const fileName of fileNames || []) {
+        if (includesFileName(readExcludedModsFromProfile(profile), fileName)) continue;
+
+        try {
+            const result = toggleExcludedMod(profile, fileName);
+            if (result.success) {
+                excludedCount++;
+            } else {
+                errors.push(`${fileName} : ${result.error}`);
+            }
+        } catch (err) {
+            errors.push(`${fileName} : ${describeFsError(err)}`);
+        }
+    }
+
+    return { success: true, excludedCount, errors };
+}
+
 // Passe un mod local du profil en favori : deplace dans Default puis relie dans le profil
 function promoteToCommon(profile, fileName) {
     const refused = rejectDefault(profile);
@@ -492,6 +528,7 @@ module.exports = {
     repairLinks,
     removeLinks,
     toggleExcludedMod,
+    excludeFavorites,
     promoteToCommon,
     promoteProfileVersion,
     relinkFavorite

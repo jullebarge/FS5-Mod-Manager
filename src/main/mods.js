@@ -74,7 +74,7 @@ function getMods(profile) {
         const isExcluded = !isDefault && includesFileName(excludedMods, file);
         const status = getModStatus(profile, isDirectory, isExcluded, isManagedCommon);
 
-        let syncState = { outOfSync: false, direction: null, defaultVersion: null };
+        let syncState = { outOfSync: false, isDuplicateCopy: false, direction: null, defaultVersion: null };
         if (isManagedCommon && !isDirectory) {
             syncState = getFavoriteSyncState(fullPath, path.join(defaultFolder, file), file);
         }
@@ -90,6 +90,7 @@ function getMods(profile) {
             isSymlink: isManagedCommon,
             isDirectory,
             isOutOfSync: syncState.outOfSync,
+            isDuplicateCopy: syncState.isDuplicateCopy,
             syncDirection: syncState.direction,
             defaultVersion: syncState.defaultVersion,
             status,

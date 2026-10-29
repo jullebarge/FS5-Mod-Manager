@@ -13,6 +13,7 @@ import { GithubModModal } from "./modals/GithubModModal";
 import { ExternalModModal } from "./modals/ExternalModModal";
 import { DeleteModModal } from "./modals/DeleteModModal";
 import { SettingsModal } from "./modals/SettingsModal";
+import { SavegamesModal } from "./modals/SavegamesModal";
 
 // Mods affiches selon le filtre actif (cartes de statistiques) et la recherche
 function getDisplayedMods({ mods, defaultMods, excludedMods, filter, search, isDefaultProfile }) {
@@ -68,7 +69,7 @@ export default function App() {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [contextMenu, setContextMenu] = useState(null);
-  // fenetre modale ouverte : "createProfile" | "github" | "external" | "settings" | null
+  // fenetre modale ouverte : "createProfile" | "github" | "external" | "settings" | "savegames" | null
   const [openModal, setOpenModal] = useState(null);
   const [modToDelete, setModToDelete] = useState(null);
   // incremente pour forcer le rechargement complet (ex. apres changement du dossier du jeu)
@@ -114,7 +115,7 @@ export default function App() {
       if (e.key === "Escape") {
         setContextMenu(null);
         setModToDelete(null);
-        setOpenModal((current) => (current === "settings" ? null : current));
+        setOpenModal((current) => (current === "settings" || current === "savegames" ? null : current));
       }
     }
 
@@ -227,6 +228,27 @@ export default function App() {
     );
 
     await reload();
+  }
+
+  // Nettoyage depuis l'analyse des sauvegardes
+  async function handleExcludeFavorites(modsToExclude) {
+    const result = await window.fs25.excludeFavorites(
+      selectedProfile,
+      modsToExclude.map((m) => m.fileName)
+    );
+    if (!checkResult(result)) return;
+
+    showToast(`${result.excludedCount} favori(s) exclu(s) du profil`, "success");
+    showErrorList("Favoris non exclus", result.errors);
+    await reload();
+  }
+
+  async function handleReintegrateMissing(missingMod) {
+    await handleToggleExcluded({
+      fileName: `${missingMod.modName}.zip`,
+      name: missingMod.title,
+      status: "common-excluded"
+    });
   }
 
   async function handlePromoteToCommon(mod) {
@@ -564,6 +586,13 @@ export default function App() {
               Supprimer les favoris du profil
             </ActionButton>
 
+            <ActionButton
+              onClick={() => setOpenModal("savegames")}
+              title="Mods manquants ou inutilisés par les parties qui utilisent ce profil"
+            >
+              🗂 Analyser les sauvegardes
+            </ActionButton>
+
             <ActionButton onClick={() => setOpenModal("github")}>
               Ajouter un mod GitHub
             </ActionButton>
@@ -715,6 +744,18 @@ export default function App() {
           onCancel={() => setOpenModal(null)}
           onPickFolder={handlePickGameFolder}
           onSave={handleSaveSettings}
+        />
+      )}
+
+      {openModal === "savegames" && (
+        <SavegamesModal
+          profile={selectedProfile}
+          profiles={profiles}
+          modsVersion={mods}
+          onClose={() => setOpenModal(null)}
+          onExcludeFavorites={handleExcludeFavorites}
+          onReintegrate={handleReintegrateMissing}
+          onDelete={setModToDelete}
         />
       )}
 

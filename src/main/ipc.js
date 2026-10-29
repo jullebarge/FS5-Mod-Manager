@@ -21,10 +21,12 @@ const {
     repairLinks,
     removeLinks,
     toggleExcludedMod,
+    excludeFavorites,
     promoteToCommon,
     promoteProfileVersion,
     relinkFavorite
 } = require('./links');
+const { getSavegameOverview, setSavegameProfile, analyzeSavegame } = require('./savegames');
 
 const failure = (err) => ({ success: false, error: err.message });
 
@@ -134,6 +136,13 @@ function registerIpcHandlers() {
         label: "relinkFavorite",
         fallback: (err) => ({ success: false, error: describeFsError(err) })
     });
+
+    handle("fs25:excludeFavorites", excludeFavorites, { label: "excludeFavorites" });
+
+    // Sauvegardes
+    handle("fs25:getSavegames", getSavegameOverview, { label: "getSavegames", fallback: () => [] });
+    handle("fs25:setSavegameProfile", setSavegameProfile, { label: "setSavegameProfile" });
+    handle("fs25:analyzeSavegame", analyzeSavegame, { label: "analyzeSavegame" });
 
     // GitHub
     handle("fs25:addGithubMod", addGithubMod, { label: "addGithubMod" });

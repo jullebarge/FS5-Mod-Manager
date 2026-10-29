@@ -109,6 +109,15 @@ export const ModCard = memo(function ModCard({
             </Badge>
           )}
 
+          {mod.isDuplicateCopy && (
+            <Badge
+              background="#555"
+              title="Fichier identique au favori, mais copié au lieu d'être lié : « Copier les favoris » le remplace par un lien et libère la place"
+            >
+              Copie
+            </Badge>
+          )}
+
           {mod.isOutOfSync && (
             <Badge
               background={mod.syncDirection === "profile-newer" ? "#2f6b3a" : "#a86b2a"}

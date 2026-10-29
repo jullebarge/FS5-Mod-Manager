@@ -118,6 +118,8 @@ async function setActiveProfile(profileName) {
 }
 
 module.exports = {
+    readXmlAttribute,
+    unescapeXml,
     isGameRunning,
     getActiveProfileFromXML,
     setActiveProfile
