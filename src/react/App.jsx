@@ -615,19 +615,28 @@ export default function App() {
   const [externalZipPath, setExternalZipPath] = useState("");
   const [externalUrl, setExternalUrl] = useState("");
   const [icons, setIcons] = useState({});
+  const [modToDelete, setModToDelete] = useState(null);
 
   const requestIdRef = useRef(0);
   // iconKey deja demandes (ou en cours) : evite les doublons entre profil et Default
   const iconRequestsRef = useRef(new Set());
 
-  function showToast(text, type = "info") {
+  function showToast(text, type = "info", duration = 3000) {
     const id = Date.now() + Math.random();
 
     setToasts((prev) => [...prev, { id, text, type }]);
 
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3000);
+    }, duration);
+  }
+
+  function showErrorList(title, errors) {
+    if (!errors || errors.length === 0) return;
+
+    const details = errors.slice(0, 3).join(" • ");
+    const more = errors.length > 3 ? ` (+${errors.length - 3})` : "";
+    showToast(`${title} : ${details}${more}`, "error", 10000);
   }
 
   async function loadIcons(modsList, requestId) {
@@ -730,6 +739,7 @@ export default function App() {
     function handleKey(e) {
       if (e.key === "Escape") {
         setContextMenu(null);
+        setModToDelete(null);
       }
     }
 
@@ -782,8 +792,16 @@ export default function App() {
     const result = await window.fs25.repairLinks(selectedProfile);
 
     if (result.success) {
+      const resynced = result.resyncedCount > 0
+        ? `, ${result.resyncedCount} resynchronisé(s)`
+        : "";
+
       showToast(
-        `${result.linkedCount} favori(s) copiés, ${result.skippedExcluded} exclus ignorés, ${result.removedDuplicates} doublon(s) remplacé(s)`
+        `${result.linkedCount} favori(s) copiés, ${result.skippedExcluded} exclus ignorés, ${result.removedDuplicates} doublon(s) remplacé(s)${resynced}`
+      );
+      showErrorList(
+        `${result.errors.length} favori(s) non traité(s) (jeu lancé ?)`,
+        result.errors
       );
 
       setFilter("all");
@@ -804,6 +822,10 @@ export default function App() {
 
     if (result.success) {
       showToast(`${result.removedCount} mod(s) favori(s) supprimé(s)`);
+      showErrorList(
+        `${result.errors.length} favori(s) non supprimé(s) (jeu lancé ?)`,
+        result.errors
+      );
       setFilter("all");
       const requestId = ++requestIdRef.current;
       setLoadingMods(true);
@@ -887,7 +909,7 @@ export default function App() {
       return;
     }
 
-    showToast(`${mod.name} supprimé`, "success");
+    showToast(`${mod.name} déplacé dans la corbeille`, "success");
 
     const requestId = ++requestIdRef.current;
     setLoadingMods(true);
@@ -987,8 +1009,12 @@ export default function App() {
       return;
     }
 
-    if (result.targetProfile === "Default" && selectedProfile !== "Default") {
-      showToast(`${mod.name} mis à jour dans les favoris (Default)`, "success");
+    if (result.targetProfile === "Default") {
+      showToast(
+        `${mod.name} mis à jour dans les favoris (Default) et ${result.relinkedCount} profil(s)`,
+        "success"
+      );
+      showErrorList("Liens non mis à jour", result.relinkErrors);
     } else {
       showToast(`${mod.name} mis à jour`, "success");
     }
@@ -1639,6 +1665,76 @@ export default function App() {
         </div>
       )}
 
+      {modToDelete && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.65)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            zIndex: 1000
+          }}
+        >
+          <div
+            style={{
+              background: colors.panel,
+              border: `1px solid ${colors.border}`,
+              borderRadius: "12px",
+              padding: "24px",
+              width: "460px",
+              boxSizing: "border-box"
+            }}
+          >
+            <h3 style={{ marginTop: 0, marginBottom: "16px" }}>
+              Supprimer {modToDelete.name} ?
+            </h3>
+
+            <div style={{ fontSize: "13px", opacity: 0.85, lineHeight: "1.5", marginBottom: "16px" }}>
+              {modToDelete.isDirectory ? "Le dossier" : "Le fichier"}{" "}
+              <strong>{modToDelete.fileName}</strong> sera déplacé dans la corbeille de Windows.
+            </div>
+
+            {modToDelete.status === "common-linked" && (
+              <div style={{ fontSize: "12px", opacity: 0.7, lineHeight: "1.4", marginBottom: "16px" }}>
+                Le mod reste dans les favoris (Default) et reviendra à la prochaine copie des
+                favoris. Pour le retirer durablement de ce profil, utilise plutôt « Exclure du profil ».
+              </div>
+            )}
+
+            {isDefaultProfile && (
+              <div style={{ fontSize: "12px", opacity: 0.7, lineHeight: "1.4", marginBottom: "16px" }}>
+                S'il s'agit d'un favori, les profils qui l'utilisent garderont leur copie liée.
+              </div>
+            )}
+
+            <div
+              style={{
+                display: "flex",
+                gap: "10px",
+                justifyContent: "flex-end"
+              }}
+            >
+              <ActionButton onClick={() => setModToDelete(null)}>
+                Annuler
+              </ActionButton>
+
+              <ActionButton
+                onClick={() => {
+                  const mod = modToDelete;
+                  setModToDelete(null);
+                  handleDeleteLocalMod(mod);
+                }}
+                style={{ background: "#d9534f", color: "#fff" }}
+              >
+                Supprimer
+              </ActionButton>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showGithubModal && (
         <div
           style={{
@@ -1789,7 +1885,7 @@ export default function App() {
 	  menu={contextMenu}
 	  onClose={() => setContextMenu(null)}
 	  onPromote={handlePromoteToCommon}
-	  onDelete={handleDeleteLocalMod}
+	  onDelete={setModToDelete}
 	  onToggleExcluded={handleToggleExcluded}
 	  onOpenGithubRepo={handleOpenGithubRepo}
 	  onUpdateGithubMod={handleUpdateGithubMod}

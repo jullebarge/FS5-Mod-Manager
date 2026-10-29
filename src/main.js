@@ -561,6 +561,112 @@ function sameFileName(a, b) {
     return String(a || "").toLowerCase() === String(b || "").toLowerCase();
 }
 
+// Message court pour l'utilisateur (les messages Node contiennent le chemin complet)
+function describeFsError(err) {
+    switch (err && err.code) {
+        case "EBUSY":
+        case "EPERM":
+        case "EACCES":
+            return "fichier utilisé ou protégé";
+        case "EISDIR":
+        case "ERR_FS_EISDIR":
+            return "un dossier porte ce nom";
+        case "ENOENT":
+            return "fichier introuvable";
+        default:
+            return (err && err.message) || String(err);
+    }
+}
+
+// Vrai si les deux chemins designent le meme fichier physique (hard link a jour)
+function isSameFile(pathA, pathB) {
+    try {
+        const a = fs.statSync(pathA, { bigint: true });
+        const b = fs.statSync(pathB, { bigint: true });
+        return a.ino === b.ino && a.dev === b.dev;
+    } catch {
+        return false;
+    }
+}
+
+function listProfiles() {
+    return fs
+        .readdirSync(modsCartesPath)
+        .filter((name) => {
+            const fullPath = path.join(modsCartesPath, name);
+            return fs.statSync(fullPath).isDirectory();
+        });
+}
+
+// Apres remplacement d'un favori dans Default, recree son lien physique dans chaque profil
+// qui le gere (sinon le profil garde l'ancienne version), et suit un eventuel changement de nom.
+function relinkFavoriteInProfiles(oldFileName, newFileName) {
+    const sourcePath = path.join(getModsFolder("Default"), newFileName);
+    const renamed = !sameFileName(oldFileName, newFileName);
+    const result = { relinkedCount: 0, errors: [] };
+
+    let profiles = [];
+    try {
+        profiles = listProfiles();
+    } catch (err) {
+        result.errors.push(err.message);
+        return result;
+    }
+
+    for (const profile of profiles) {
+        const profileDir = getModsFolder(profile);
+
+        if (renamed) {
+            const excluded = [...readExcludedModsFromProfile(profile)];
+            const excludedIndex = excluded.findIndex((f) => sameFileName(f, oldFileName));
+            if (excludedIndex >= 0) {
+                excluded[excludedIndex] = newFileName;
+                try {
+                    writeExcludedModsToProfile(profile, excluded);
+                } catch (err) {
+                    result.errors.push(`${profile} : ${describeFsError(err)}`);
+                }
+            }
+        }
+
+        const managed = readManagedLinks(profile);
+        const index = managed.findIndex((f) => sameFileName(f, oldFileName));
+        if (index < 0) continue;
+
+        const oldPath = path.join(profileDir, managed[index]);
+        const newPath = path.join(profileDir, newFileName);
+
+        try {
+            if (fs.existsSync(oldPath)) {
+                fs.rmSync(oldPath, { force: true });
+            }
+            if (fs.existsSync(newPath) && !isSameFile(sourcePath, newPath)) {
+                fs.rmSync(newPath, { force: true });
+            }
+            if (!fs.existsSync(newPath)) {
+                fs.linkSync(sourcePath, newPath);
+            }
+            result.relinkedCount++;
+        } catch (err) {
+            result.errors.push(`${profile} : ${describeFsError(err)}`);
+        }
+
+        // si l'ancien lien n'a pas pu etre retire il reste gere, sinon on suit le nouveau nom
+        // (un lien manquant sera recree par "Copier les favoris")
+        if (!fs.existsSync(oldPath) || !renamed) {
+            managed[index] = newFileName;
+        }
+
+        try {
+            writeManagedLinks(profile, managed);
+        } catch (err) {
+            result.errors.push(`${profile} : ${describeFsError(err)}`);
+        }
+    }
+
+    return result;
+}
+
 function upsertGithubRegistryEntry(entry) {
     const registry = readGithubRegistry();
 
@@ -853,12 +959,7 @@ function createWindow() {
 app.whenReady().then(() => {
     ipcMain.handle('fs25:getProfiles', async() => {
         try {
-            return fs
-            .readdirSync(modsCartesPath)
-            .filter((name) => {
-                const fullPath = path.join(modsCartesPath, name);
-                return fs.statSync(fullPath).isDirectory();
-            });
+            return listProfiles();
         } catch (err) {
             console.error("Erreur lecture profils:", err);
             return [];
@@ -1172,10 +1273,8 @@ app.whenReady().then(() => {
             let isOutOfSync = false;
             if (isManagedCommon && !isDirectory) {
                 const defaultPath = path.join(getModsFolder("Default"), file);
-                if (fs.existsSync(defaultPath)) {
-                    const defaultStats = fs.statSync(defaultPath);
-                    isOutOfSync = defaultStats.size !== stats.size;
-                }
+                // un lien a jour pointe sur le meme fichier physique que l'original
+                isOutOfSync = fs.existsSync(defaultPath) && !isSameFile(defaultPath, fullPath);
             }
 
             return {
@@ -1281,45 +1380,66 @@ app.whenReady().then(() => {
 		// anciens liens gérés par l'app
 		const previousManaged = readManagedLinks(profile);
 
-		// 1. Supprimer les anciens hard links gérés
-		for (const file of previousManaged) {
-		  const targetPath = path.join(profileDir, file);
-		  try {
-			if (fs.existsSync(targetPath)) {
-			  fs.rmSync(targetPath, { force: true });
-			}
-		  } catch {}
-		}
-
-		// 2. Recréer les liens vers les communs non exclus
 		const defaultEntries = fs.readdirSync(defaultDir)
 		  .filter((file) => file.toLowerCase().endsWith(".zip"));
+		const wanted = defaultEntries.filter((file) => !excludedMods.includes(file));
+		const skippedExcluded = defaultEntries.length - wanted.length;
 
+		// Chaque fichier est traite independamment : une erreur (mod verrouille par le jeu...)
+		// n'interrompt pas la copie, et .managed_links.json reflete toujours l'etat reel.
 		const newManaged = [];
+		const errors = [];
 		let linkedCount = 0;
-		let skippedExcluded = 0;
+		let resyncedCount = 0;
 		let removedDuplicates = 0;
 
-		for (const file of defaultEntries) {
-		  if (excludedMods.includes(file)) {
-			skippedExcluded++;
-			continue;
-		  }
+		// 1. Retirer les anciens liens gérés qui ne sont plus des favoris à lier
+		for (const file of previousManaged) {
+		  if (wanted.some((w) => sameFileName(w, file))) continue;
 
+		  try {
+			fs.rmSync(path.join(profileDir, file), { force: true });
+		  } catch (err) {
+			errors.push(`${file} : ${describeFsError(err)}`);
+			newManaged.push(file);
+		  }
+		}
+
+		// 2. Lier les favoris non exclus (les liens déjà à jour ne sont pas touchés)
+		for (const file of wanted) {
 		  const sourcePath = path.join(defaultDir, file);
 		  const targetPath = path.join(profileDir, file);
+		  const wasManaged = previousManaged.some((m) => sameFileName(m, file));
 
-		  if (fs.existsSync(targetPath)) {
-			// s'il y a deja un fichier local du meme nom, on le remplace
-			fs.rmSync(targetPath, { force: true });
-			removedDuplicates++;
+		  try {
+			if (fs.existsSync(targetPath)) {
+			  if (isSameFile(sourcePath, targetPath)) {
+				newManaged.push(file);
+				linkedCount++;
+				continue;
+			  }
+
+			  // lien périmé, ou fichier local du même nom : on le remplace
+			  fs.rmSync(targetPath, { force: true });
+			  if (wasManaged) {
+				resyncedCount++;
+			  } else {
+				removedDuplicates++;
+			  }
+			}
+
+			// hard link (pas besoin d'admin, meme volume)
+			fs.linkSync(sourcePath, targetPath);
+
+			newManaged.push(file);
+			linkedCount++;
+		  } catch (err) {
+			errors.push(`${file} : ${describeFsError(err)}`);
+			// un ancien lien qui n'a pas pu être retiré reste géré
+			if (wasManaged && fs.existsSync(targetPath)) {
+			  newManaged.push(file);
+			}
 		  }
-
-		  // hard link (pas besoin d'admin, meme volume)
-		  fs.linkSync(sourcePath, targetPath);
-
-		  newManaged.push(file);
-		  linkedCount++;
 		}
 
 		writeManagedLinks(profile, newManaged);
@@ -1327,8 +1447,10 @@ app.whenReady().then(() => {
 		return {
 		  success: true,
 		  linkedCount,
+		  resyncedCount,
 		  skippedExcluded,
-		  removedDuplicates
+		  removedDuplicates,
+		  errors
 		};
 	  } catch (err) {
 		console.error("Erreur repairLinks:", err);
@@ -1349,6 +1471,8 @@ app.whenReady().then(() => {
 		}
 
 		const managed = readManagedLinks(profile);
+		const remaining = [];
+		const errors = [];
 		let removedCount = 0;
 
 		for (const file of managed) {
@@ -1358,12 +1482,16 @@ app.whenReady().then(() => {
 			  fs.rmSync(fullPath, { force: true });
 			  removedCount++;
 			}
-		  } catch {}
+		  } catch (err) {
+			// lien toujours présent (fichier verrouillé...) : il reste géré
+			errors.push(`${file} : ${describeFsError(err)}`);
+			remaining.push(file);
+		  }
 		}
 
-		writeManagedLinks(profile, []);
+		writeManagedLinks(profile, remaining);
 
-		return { success: true, removedCount };
+		return { success: true, removedCount, errors };
 	  } catch (err) {
 		console.error("Erreur removeLinks:", err);
 		return { success: false, error: err.message };
@@ -1526,7 +1654,8 @@ if (!managedLinks.includes(fileName)) {
 		  return { success: false, error: "Fichier introuvable" };
 		}
 
-		fs.rmSync(filePath, { recursive: true, force: true });
+		// corbeille Windows plutot que suppression definitive (fichiers et mods dossiers)
+		await shell.trashItem(filePath);
 		removeGithubRegistryEntry(profile, fileName);
 		removeExternalRegistryEntry(profile, fileName);
 		 
@@ -1626,12 +1755,18 @@ if (!managedLinks.includes(fileName)) {
 
             writeGithubRegistry(registry);
 
+            const relink = targetProfile === "Default"
+                ? relinkFavoriteInProfiles(entry.fileName, asset.name)
+                : { relinkedCount: 0, errors: [] };
+
             return {
                 success: true,
                 fileName: asset.name,
                 repo: `${entry.owner}/${entry.repo}`,
                 targetProfile,
-                releaseName: release.name || release.tag_name || "release"
+                releaseName: release.name || release.tag_name || "release",
+                relinkedCount: relink.relinkedCount,
+                relinkErrors: relink.errors
             };
         } catch (err) {
             console.error("Erreur updateGithubMod:", err);
