@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('fs25', {
   promoteToCommon: (profile, fileName) => ipcRenderer.invoke('fs25:promoteToCommon', profile, fileName),
   deleteLocalMod: (profile, fileName, options) => ipcRenderer.invoke('fs25:deleteLocalMod', profile, fileName, options),
   getFavoriteUsage: (fileName) => ipcRenderer.invoke('fs25:getFavoriteUsage', fileName),
+  getCopyTargets: (profile, fileName) => ipcRenderer.invoke('fs25:getCopyTargets', profile, fileName),
+  copyModToProfiles: (profile, fileName, targetProfiles, options) =>
+    ipcRenderer.invoke('fs25:copyModToProfiles', profile, fileName, targetProfiles, options),
   promoteProfileVersion: (profile, fileName) => ipcRenderer.invoke('fs25:promoteProfileVersion', profile, fileName),
   relinkFavorite: (profile, fileName) => ipcRenderer.invoke('fs25:relinkFavorite', profile, fileName),
   excludeFavorites: (profile, fileNames) => ipcRenderer.invoke('fs25:excludeFavorites', profile, fileNames),

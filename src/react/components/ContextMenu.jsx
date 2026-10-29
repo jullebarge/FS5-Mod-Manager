@@ -20,7 +20,8 @@ export function ContextMenu({
   onOpenExternalUrl,
   onOpenModZip,
   onPromoteProfileVersion,
-  onRelinkFavorite
+  onRelinkFavorite,
+  onCopyToProfiles
 }) {
   const menuRef = useRef(null);
   const [position, setPosition] = useState(null);
@@ -78,6 +79,17 @@ export function ContextMenu({
             }}
           >
             📦 Passer en favori
+          </MenuItem>
+        )}
+
+        {(mod.status === "local" || mod.status === "directory") && selectedProfile !== DEFAULT_PROFILE && (
+          <MenuItem
+            onClick={() => {
+              onCopyToProfiles(mod);
+              onClose();
+            }}
+          >
+            📋 Copier vers un autre profil
           </MenuItem>
         )}
 

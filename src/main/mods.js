@@ -1,14 +1,14 @@
-// Liste des mods d'un profil, ajout de mods externes, suppression
+// Liste des mods d'un profil, ajout de mods externes, copie entre profils, suppression
 const { shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { withZip } = require('../zipReader');
 const { DEFAULT_PROFILE, getModsFolder } = require('./settings');
-const { includesFileName } = require('./fsUtils');
-const { readManagedLinks, readExcludedModsFromProfile } = require('./profiles');
-const { getModCacheKey, readModInfo } = require('./modInfo');
+const { includesFileName, describeFsError, haveSameContent } = require('./fsUtils');
+const { listProfiles, readManagedLinks, readExcludedModsFromProfile } = require('./profiles');
+const { getModCacheKey, readModInfo, readZipModVersion } = require('./modInfo');
 const { makeIconKey } = require('./icons');
-const { githubRegistry, externalRegistry } = require('./registry');
+const { githubRegistry, externalRegistry, matchesEntry } = require('./registry');
 const { buildGithubMeta } = require('./github');
 const { getFavoriteSyncState, removeFavoriteFromProfiles } = require('./links');
 
@@ -168,6 +168,105 @@ function addExternalMod(profile, zipPath, url) {
     return { success: true, fileName };
 }
 
+// Un zip deja present avec exactement le meme contenu n'a pas besoin d'etre recopie
+// (un mod dossier deja present est toujours considere comme une autre version)
+function isIdenticalModFile(sourcePath, targetPath) {
+    return !fs.statSync(sourcePath).isDirectory() && haveSameContent(sourcePath, targetPath);
+}
+
+// Profils (hors Default et profil source) vers lesquels copier un mod local, avec ce qu'ils contiennent deja
+function getCopyTargets(sourceProfile, fileName) {
+    const sourcePath = path.join(getModsFolder(sourceProfile), fileName);
+
+    return listProfiles()
+        .filter((profile) => profile !== sourceProfile)
+        .map((profile) => {
+            const targetPath = path.join(getModsFolder(profile), fileName);
+
+            if (!fs.existsSync(targetPath)) {
+                return { profile, state: "absent" };
+            }
+            if (isIdenticalModFile(sourcePath, targetPath)) {
+                return { profile, state: "same" };
+            }
+
+            let version = null;
+            try {
+                const stats = fs.statSync(targetPath);
+                version = stats.isDirectory() ? null : readZipModVersion(fileName, targetPath, stats);
+            } catch {}
+
+            return { profile, state: "different", version };
+        });
+}
+
+// Reporte le suivi GitHub / externe du mod dans le profil cible
+function copyTrackingEntries(sourceProfile, targetProfile, fileName) {
+    for (const registry of [githubRegistry, externalRegistry]) {
+        const entry = registry.read().find((item) => matchesEntry(item, sourceProfile, fileName));
+        if (entry) {
+            registry.upsert({ ...entry, profile: targetProfile });
+        }
+    }
+}
+
+// Copie un mod local (zip ou dossier) dans d'autres profils : vraie copie independante,
+// sans lien ni favori. replaceExisting : remplace une autre version deja presente
+// (envoyee a la corbeille).
+async function copyModToProfiles(sourceProfile, fileName, targetProfiles, options = {}) {
+    if (!sourceProfile || sourceProfile === DEFAULT_PROFILE) {
+        return { success: false, error: "Pour partager un mod de Default, utilise les favoris" };
+    }
+
+    const sourcePath = path.join(getModsFolder(sourceProfile), fileName);
+    if (!fs.existsSync(sourcePath)) {
+        return { success: false, error: "Mod introuvable dans le profil" };
+    }
+
+    const isDirectory = fs.statSync(sourcePath).isDirectory();
+    const knownProfiles = listProfiles();
+    const result = { success: true, copiedCount: 0, alreadyCount: 0, replacedCount: 0, errors: [] };
+
+    for (const targetProfile of targetProfiles || []) {
+        if (targetProfile === sourceProfile || !knownProfiles.includes(targetProfile)) {
+            result.errors.push(`${targetProfile} : profil invalide`);
+            continue;
+        }
+
+        const targetPath = path.join(getModsFolder(targetProfile), fileName);
+
+        try {
+            if (fs.existsSync(targetPath)) {
+                if (isIdenticalModFile(sourcePath, targetPath)) {
+                    result.alreadyCount++;
+                    copyTrackingEntries(sourceProfile, targetProfile, fileName);
+                    continue;
+                }
+                if (!options.replaceExisting) {
+                    result.errors.push(`${targetProfile} : une autre version est déjà présente`);
+                    continue;
+                }
+
+                await shell.trashItem(targetPath);
+                result.replacedCount++;
+            }
+
+            if (isDirectory) {
+                fs.cpSync(sourcePath, targetPath, { recursive: true, errorOnExist: true, force: false });
+            } else {
+                fs.copyFileSync(sourcePath, targetPath, fs.constants.COPYFILE_EXCL);
+            }
+
+            copyTrackingEntries(sourceProfile, targetProfile, fileName);
+            result.copiedCount++;
+        } catch (err) {
+            result.errors.push(`${targetProfile} : ${describeFsError(err)}`);
+        }
+    }
+
+    return result;
+}
+
 async function deleteMod(profile, fileName, options = {}) {
     const filePath = path.join(getModsFolder(profile), fileName);
 
@@ -195,5 +294,7 @@ module.exports = {
     getMods,
     getExcludedMods,
     addExternalMod,
+    getCopyTargets,
+    copyModToProfiles,
     deleteMod
 };

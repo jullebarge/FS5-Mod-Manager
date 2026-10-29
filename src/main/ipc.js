@@ -14,7 +14,14 @@ const {
 const { isGameRunning, getActiveProfileFromXML, setActiveProfile } = require('./game');
 const { listProfiles, createProfile } = require('./profiles');
 const { getModIcon } = require('./icons');
-const { getMods, getExcludedMods, addExternalMod, deleteMod } = require('./mods');
+const {
+    getMods,
+    getExcludedMods,
+    addExternalMod,
+    getCopyTargets,
+    copyModToProfiles,
+    deleteMod
+} = require('./mods');
 const { addGithubMod, checkGithubUpdates, updateGithubMod } = require('./github');
 const {
     getFavoriteUsage,
@@ -115,6 +122,8 @@ function registerIpcHandlers() {
     handle("fs25:getModIcon", getModIcon, { label: "getModIcon", fallback: () => null });
     handle("fs25:getExcludedMods", getExcludedMods, { label: "getExcludedMods", fallback: () => [] });
     handle("fs25:deleteLocalMod", deleteMod, { label: "deleteLocalMod" });
+    handle("fs25:getCopyTargets", getCopyTargets, { label: "getCopyTargets", fallback: () => [] });
+    handle("fs25:copyModToProfiles", copyModToProfiles, { label: "copyModToProfiles" });
 
     handle("fs25:openModZip", (profile, fileName) =>
         openPathResult(path.join(getModsFolder(profile), fileName), "Fichier introuvable"), { label: "openModZip" });

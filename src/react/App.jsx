@@ -14,6 +14,7 @@ import { ExternalModModal } from "./modals/ExternalModModal";
 import { DeleteModModal } from "./modals/DeleteModModal";
 import { SettingsModal } from "./modals/SettingsModal";
 import { SavegamesModal } from "./modals/SavegamesModal";
+import { CopyModModal } from "./modals/CopyModModal";
 
 // Mods affiches selon le filtre actif (cartes de statistiques) et la recherche
 function getDisplayedMods({ mods, defaultMods, excludedMods, filter, search, isDefaultProfile }) {
@@ -72,6 +73,7 @@ export default function App() {
   // fenetre modale ouverte : "createProfile" | "github" | "external" | "settings" | "savegames" | null
   const [openModal, setOpenModal] = useState(null);
   const [modToDelete, setModToDelete] = useState(null);
+  const [modToCopy, setModToCopy] = useState(null);
   // incremente pour forcer le rechargement complet (ex. apres changement du dossier du jeu)
   const [reloadToken, setReloadToken] = useState(0);
 
@@ -115,6 +117,7 @@ export default function App() {
       if (e.key === "Escape") {
         setContextMenu(null);
         setModToDelete(null);
+        setModToCopy(null);
         setOpenModal((current) => (current === "settings" || current === "savegames" ? null : current));
       }
     }
@@ -228,6 +231,19 @@ export default function App() {
     );
 
     await reload();
+  }
+
+  async function handleCopyMod(mod, targetProfiles, options) {
+    setModToCopy(null);
+
+    const result = await window.fs25.copyModToProfiles(selectedProfile, mod.fileName, targetProfiles, options);
+    if (!checkResult(result)) return;
+
+    if (result.copiedCount > 0) {
+      const replaced = result.replacedCount > 0 ? ` (${result.replacedCount} version(s) remplacée(s))` : "";
+      showToast(`${mod.name} copié dans ${result.copiedCount} profil(s)${replaced}`, "success");
+    }
+    showErrorList("Copie impossible", result.errors);
   }
 
   // Nettoyage depuis l'analyse des sauvegardes
@@ -759,6 +775,15 @@ export default function App() {
         />
       )}
 
+      {modToCopy && (
+        <CopyModModal
+          mod={modToCopy}
+          profile={selectedProfile}
+          onCancel={() => setModToCopy(null)}
+          onCopy={(targetProfiles, options) => handleCopyMod(modToCopy, targetProfiles, options)}
+        />
+      )}
+
       {modToDelete && (
         <DeleteModModal
           mod={modToDelete}
@@ -781,6 +806,7 @@ export default function App() {
         onDelete={setModToDelete}
         onPromoteProfileVersion={handlePromoteProfileVersion}
         onRelinkFavorite={handleRelinkFavorite}
+        onCopyToProfiles={setModToCopy}
         onToggleExcluded={handleToggleExcluded}
         onOpenGithubRepo={handleOpenGithubRepo}
         onUpdateGithubMod={handleUpdateGithubMod}
