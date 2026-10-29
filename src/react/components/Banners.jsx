@@ -1,5 +1,6 @@
 import React from "react";
 import { ActionButton } from "./Controls";
+import { t } from "../../locales/i18n";
 
 const MAX_LISTED = 10;
 
@@ -10,7 +11,7 @@ export function ConflictBanner({ mods }) {
   return (
     <div className="warning-banner">
       <div style={{ fontWeight: 700, marginBottom: "6px" }}>
-        {mods.length} mod(s) en conflit :
+        {t("banners.conflicts", { count: mods.length })}
       </div>
 
       <div style={{ fontSize: "13px", lineHeight: "1.4" }}>
@@ -44,7 +45,7 @@ export function DependencyBanner({ mods, onResolve }) {
   return (
     <div className="warning-banner">
       <div style={{ fontWeight: 700, marginBottom: "8px" }}>
-        {dependencies.length} dépendance(s) manquante(s) :
+        {t("banners.missingDependencies", { count: dependencies.length })}
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px" }}>
@@ -57,25 +58,25 @@ export function DependencyBanner({ mods, onResolve }) {
               style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}
             >
               <span style={{ fontWeight: 600 }}>{dependency.modName}</span>
-              <span style={{ opacity: 0.85 }}>requis par {dependency.requiredBy.join(", ")}</span>
+              <span style={{ opacity: 0.85 }}>{t("banners.requiredBy", { mods: dependency.requiredBy.join(", ") })}</span>
 
               {availability.type === "excluded-favorite" && (
                 <ActionButton style={smallButton} onClick={() => onResolve(dependency)}>
-                  Réintégrer le favori
+                  {t("banners.reintegrateFavorite")}
                 </ActionButton>
               )}
               {availability.type === "favorite" && (
                 <ActionButton style={smallButton} onClick={() => onResolve(dependency)}>
-                  Lier le favori
+                  {t("banners.linkFavorite")}
                 </ActionButton>
               )}
               {availability.type === "other-profile" && (
                 <ActionButton style={smallButton} onClick={() => onResolve(dependency)}>
-                  Copier depuis {availability.profile}
+                  {t("banners.copyFrom", { profile: availability.profile })}
                 </ActionButton>
               )}
               {availability.type === "none" && (
-                <span style={{ opacity: 0.85 }}>introuvable dans tes dossiers : à télécharger</span>
+                <span style={{ opacity: 0.85 }}>{t("banners.dependencyNotFound")}</span>
               )}
             </div>
           );
@@ -96,7 +97,7 @@ export function OutOfSyncBanner({ mods, onPromote, onRelink }) {
   return (
     <div className="warning-banner">
       <div style={{ fontWeight: 700, marginBottom: "8px" }}>
-        {mods.length} favori(s) désynchronisé(s) :
+        {t("banners.outOfSync", { count: mods.length })}
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px" }}>
@@ -110,24 +111,24 @@ export function OutOfSyncBanner({ mods, onPromote, onRelink }) {
             >
               <span style={{ fontWeight: 600 }}>{m.name}</span>
               <span style={{ opacity: 0.85 }}>
-                profil v{m.version} · favoris v{m.defaultVersion || "?"}
-                {profileNewer ? " (profil plus récent)" : ""}
+                {t("banners.versions", { profileVersion: m.version, favoriteVersion: m.defaultVersion || "?" })}
+                {profileNewer ? ` ${t("banners.profileNewer")}` : ""}
               </span>
               <ActionButton
                 onClick={() => onPromote(m)}
-                title="Remplace la version des favoris (Default) par celle de ce profil, puis relie tous les profils qui l'utilisent"
+                title={t("banners.keepProfileTooltip")}
                 variant={profileNewer ? undefined : "muted"}
                 style={smallButton}
               >
-                ⬆ Garder celle du profil
+                ⬆ {t("banners.keepProfile")}
               </ActionButton>
               <ActionButton
                 onClick={() => onRelink(m)}
-                title="Remplace la copie de ce profil par la version des favoris (l'ancienne copie part à la corbeille)"
+                title={t("banners.useFavoriteTooltip")}
                 variant={profileNewer ? "muted" : undefined}
                 style={smallButton}
               >
-                ⬇ Reprendre celle des favoris
+                ⬇ {t("banners.useFavorite")}
               </ActionButton>
             </div>
           );

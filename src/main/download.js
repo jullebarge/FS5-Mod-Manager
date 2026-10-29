@@ -1,6 +1,7 @@
 const fs = require('fs');
 const https = require('https');
 const { withZip } = require('../zipReader');
+const { t } = require('../locales/i18n');
 
 // Delai sans activite reseau avant abandon, et nombre max de redirections suivies
 const HTTP_TIMEOUT = 30 * 1000;
@@ -37,7 +38,7 @@ function downloadFile(url, destinationPath, redirectsLeft = MAX_REDIRECTS) {
                 response.resume();
 
                 if (redirectsLeft <= 0) {
-                    reject(new Error("Echec du telechargement (trop de redirections)"));
+                    reject(new Error(t("errors.download.tooManyRedirects")));
                     return;
                 }
 
@@ -49,7 +50,7 @@ function downloadFile(url, destinationPath, redirectsLeft = MAX_REDIRECTS) {
 
             if (!response.statusCode || response.statusCode >= 400) {
                 response.resume();
-                reject(new Error(`Echec du telechargement (${response.statusCode || "?"})`));
+                reject(new Error(t("errors.download.failed", { status: response.statusCode || "?" })));
                 return;
             }
 
@@ -66,7 +67,7 @@ function downloadFile(url, destinationPath, redirectsLeft = MAX_REDIRECTS) {
 
                         if (!hasModDesc) {
                             fs.rmSync(tempPath, { force: true });
-                            reject(new Error("Le fichier telecharge ne semble pas etre un mod FS valide (modDesc.xml introuvable)"));
+                            reject(new Error(t("errors.download.notAMod")));
                             return;
                         }
 
@@ -80,7 +81,7 @@ function downloadFile(url, destinationPath, redirectsLeft = MAX_REDIRECTS) {
                         try {
                             fs.rmSync(tempPath, { force: true });
                         } catch {}
-                        reject(new Error("Le fichier telecharge n'est pas un ZIP valide"));
+                        reject(new Error(t("errors.download.invalidZip")));
                     }
                 });
             });
@@ -94,7 +95,7 @@ function downloadFile(url, destinationPath, redirectsLeft = MAX_REDIRECTS) {
         });
 
         request.setTimeout(HTTP_TIMEOUT, () => {
-            request.destroy(new Error("Le téléchargement ne répond plus (délai dépassé)"));
+            request.destroy(new Error(t("errors.download.timeout")));
         });
 
         request.on("error", fail);

@@ -4,6 +4,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('fs25', {
+  initialLanguage: ipcRenderer.sendSync('fs25:getLanguageSync'),
   getProfiles: () => ipcRenderer.invoke('fs25:getProfiles'),
   getActiveProfile: () => ipcRenderer.invoke('fs25:getActiveProfile'),
   setActiveProfile: (profileName) => ipcRenderer.invoke('fs25:setActiveProfile', profileName),

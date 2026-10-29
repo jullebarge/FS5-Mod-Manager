@@ -13,6 +13,7 @@ const {
 } = require('./profiles');
 const { readZipModVersion } = require('./modInfo');
 const { githubRegistry, externalRegistry } = require('./registry');
+const { t } = require('../locales/i18n');
 
 function getDefaultFolder() {
     return getModsFolder(DEFAULT_PROFILE);
@@ -20,7 +21,7 @@ function getDefaultFolder() {
 
 function rejectDefault(profile) {
     if (!profile || profile === DEFAULT_PROFILE) {
-        return { success: false, error: "Action impossible sur Default" };
+        return { success: false, error: t("errors.notOnDefault") };
     }
     return null;
 }
@@ -45,16 +46,19 @@ function compareModVersions(a, b) {
 function getFavoriteSyncState(profilePath, defaultPath, fileName) {
     const state = { outOfSync: false, isDuplicateCopy: false, direction: null, defaultVersion: null };
 
+    // cas courant : le lien est a jour (meme fichier physique), verifie avec un seul stat par fichier
     let profileStats;
     let defaultStats;
     try {
+        const profileId = fs.statSync(profilePath, { bigint: true });
+        const defaultId = fs.statSync(defaultPath, { bigint: true });
+        if (profileId.ino === defaultId.ino && profileId.dev === defaultId.dev) {
+            return state;
+        }
+
         profileStats = fs.statSync(profilePath);
         defaultStats = fs.statSync(defaultPath);
     } catch {
-        return state;
-    }
-
-    if (isSameFile(defaultPath, profilePath)) {
         return state;
     }
 
@@ -217,7 +221,7 @@ function repairLinks(profile) {
     const excludedMods = readExcludedModsFromProfile(profile);
 
     if (!fs.existsSync(profileDir) || !fs.existsSync(defaultDir)) {
-        return { success: false, error: "Dossier profil ou Default introuvable" };
+        return { success: false, error: t("errors.profileOrDefaultNotFound") };
     }
 
     // anciens liens gérés par l'app
@@ -314,7 +318,7 @@ function removeLinks(profile) {
     const profileDir = getModsFolder(profile);
 
     if (!fs.existsSync(profileDir)) {
-        return { success: false, error: "Dossier profil introuvable" };
+        return { success: false, error: t("errors.profileFolderNotFound") };
     }
 
     const managed = readManagedLinks(profile);
@@ -371,7 +375,7 @@ function toggleExcludedMod(profile, fileName) {
     excludedMods = excludedMods.filter((m) => !sameFileName(m, fileName));
 
     if (!fs.existsSync(sourcePath)) {
-        return { success: false, error: "Mod favori introuvable dans Default" };
+        return { success: false, error: t("errors.favoriteNotInDefault") };
     }
 
     // s'il n'existe pas deja dans le profil, on recrée le hard link
@@ -424,12 +428,12 @@ function promoteToCommon(profile, fileName) {
     const defaultPath = path.join(getDefaultFolder(), fileName);
 
     if (!fs.existsSync(profilePath)) {
-        return { success: false, error: "Mod local introuvable" };
+        return { success: false, error: t("errors.localModNotFound") };
     }
 
     // éviter d'écraser un mod existant dans Default
     if (fs.existsSync(defaultPath)) {
-        return { success: false, error: "Un mod du même nom existe déjà dans les favoris" };
+        return { success: false, error: t("errors.alreadyInFavorites") };
     }
 
     fs.renameSync(profilePath, defaultPath);
@@ -458,13 +462,13 @@ function promoteProfileVersion(profile, fileName) {
     const tempPath = `${defaultPath}.sync-tmp`;
 
     if (!fs.existsSync(profilePath)) {
-        return { success: false, error: "Mod introuvable dans le profil" };
+        return { success: false, error: t("errors.modNotInProfile") };
     }
     if (!fs.existsSync(defaultPath)) {
-        return { success: false, error: "Mod favori introuvable dans Default" };
+        return { success: false, error: t("errors.favoriteNotInDefault") };
     }
     if (!includesFileName(readManagedLinks(profile), fileName)) {
-        return { success: false, error: "Ce mod n'est pas un favori lié" };
+        return { success: false, error: t("errors.notALinkedFavorite") };
     }
     if (isSameFile(profilePath, defaultPath)) {
         return { success: true, relinkedCount: 0, errors: [] };
@@ -500,7 +504,7 @@ async function relinkFavorite(profile, fileName) {
     const defaultPath = path.join(getDefaultFolder(), fileName);
 
     if (!fs.existsSync(defaultPath)) {
-        return { success: false, error: "Mod favori introuvable dans Default" };
+        return { success: false, error: t("errors.favoriteNotInDefault") };
     }
 
     if (fs.existsSync(profilePath) && !isSameFile(profilePath, defaultPath)) {

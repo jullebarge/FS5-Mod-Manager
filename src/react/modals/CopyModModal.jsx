@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Modal } from "../components/Modal";
 import { ActionButton } from "../components/Controls";
+import { t } from "../../locales/i18n";
 
 // Copie d'un mod local vers d'autres profils, sans en faire un favori
 export function CopyModModal({ mod, profile, onCancel, onCopy }) {
@@ -28,33 +29,32 @@ export function CopyModModal({ mod, profile, onCancel, onCopy }) {
   }
 
   const replaceCount = (targets || [])
-    .filter((t) => t.state === "different" && selected.includes(t.profile)).length;
+    .filter((target) => target.state === "different" && selected.includes(target.profile)).length;
 
   return (
     <Modal
-      title={`Copier ${mod.name} vers d'autres profils`}
+      title={t("copyModal.title", { name: mod.name })}
       width={520}
       actions={
         <>
-          <ActionButton onClick={onCancel}>Annuler</ActionButton>
+          <ActionButton onClick={onCancel}>{t("common.cancel")}</ActionButton>
           <ActionButton
             disabled={selected.length === 0}
             onClick={() => onCopy(selected, { replaceExisting: replaceCount > 0 })}
           >
-            Copier vers {selected.length} profil(s)
+            {t("copyModal.submit", { count: selected.length })}
           </ActionButton>
         </>
       }
     >
       <div className="hint" style={{ marginBottom: "14px" }}>
-        {mod.isDirectory ? "Le dossier du mod" : "Le zip du mod"} sera copié dans chaque profil coché :
-        une copie indépendante, qui reste un mod local de ce profil.
+        {mod.isDirectory ? t("copyModal.hintFolder") : t("copyModal.hintZip")}
       </div>
 
       {targets === null ? (
-        <div className="hint">Lecture des profils...</div>
+        <div className="hint">{t("copyModal.loading")}</div>
       ) : targets.length === 0 ? (
-        <div className="hint">Aucun autre profil.</div>
+        <div className="hint">{t("copyModal.noProfiles")}</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" }}>
           {targets.map((target) => (
@@ -71,9 +71,11 @@ export function CopyModModal({ mod, profile, onCancel, onCopy }) {
               />
               <span style={{ fontWeight: 600 }}>{target.profile}</span>
               <span className="hint">
-                {target.state === "same" && "déjà présent (fichier identique)"}
+                {target.state === "same" && t("copyModal.alreadyPresent")}
                 {target.state === "different" &&
-                  `une autre version est présente${target.version ? ` (v${target.version})` : ""} : elle sera remplacée (corbeille)`}
+                  (target.version
+                    ? t("copyModal.otherVersionNumbered", { version: target.version })
+                    : t("copyModal.otherVersion"))}
               </span>
             </label>
           ))}

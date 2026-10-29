@@ -7,7 +7,7 @@ const { DEFAULT_PROFILE, getModsFolder } = require('./settings');
 const { listProfiles } = require('./profiles');
 const { listModFiles } = require('./mods');
 const { getModCacheKey, readModInfo } = require('./modInfo');
-const { getIconCacheDir, makeIconKey } = require('./icons');
+const { getIconCacheDir, makeIconKey, forgetCachedIcon } = require('./icons');
 
 const ICON_FILE_PATTERN = /^[0-9a-f]{32}\.png$/;
 // fichiers temporaires de texconv laisses par une conversion interrompue
@@ -103,6 +103,7 @@ async function cleanIconCache({ ignoreGracePeriod = false } = {}) {
     for (const file of unused) {
         try {
             await fs.promises.unlink(path.join(dir, file.name));
+            forgetCachedIcon(file.name.slice(0, 32));
             removedCount++;
             removedBytes += file.size;
         } catch {}

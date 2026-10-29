@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const { readJsonFile, writeJsonFile } = require('../utils');
 const { getModsCartesPath, getModsFolder, onSettingsChange } = require('./settings');
+const { t } = require('../locales/i18n');
 
 const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
 
@@ -22,19 +23,19 @@ function listProfiles() {
 
 function validateProfileName(name) {
     if (!name) {
-        return "Nom de profil vide";
+        return t("errors.profileName.empty");
     }
     if (name.toLowerCase() === "default") {
-        return "« Default » est réservé aux mods favoris";
+        return t("errors.profileName.reserved");
     }
     if (/[<>:"/\\|?*\x00-\x1f]/.test(name)) {
-        return "Le nom ne doit pas contenir < > : \" / \\ | ? *";
+        return t("errors.profileName.invalidChars");
     }
     if (/^\.+$/.test(name) || /[. ]$/.test(name)) {
-        return "Le nom ne doit pas finir par un point ou un espace";
+        return t("errors.profileName.trailingDot");
     }
     if (WINDOWS_RESERVED_NAMES.test(name)) {
-        return "Ce nom est réservé par Windows";
+        return t("errors.profileName.windowsReserved");
     }
     return null;
 }
@@ -50,7 +51,7 @@ function createProfile(profileName) {
     const newPath = path.join(getModsCartesPath(), cleanName);
 
     if (fs.existsSync(newPath)) {
-        return { success: false, error: "Le profil existe deja" };
+        return { success: false, error: t("errors.profileName.exists") };
     }
 
     fs.mkdirSync(newPath, { recursive: true });

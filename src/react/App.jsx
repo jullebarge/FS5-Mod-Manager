@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { DEFAULT_PROFILE } from "./theme";
+import { setLanguage, t } from "../locales/i18n";
 import { formatSizeStats, includesFileName } from "./utils";
 import { useGameRunning, useProfileData, useToasts } from "./hooks";
 import { GitHubIcon, Spinner } from "./components/Icons";
@@ -80,7 +81,7 @@ export default function App() {
   const { toasts, showToast, showErrorList } = useToasts();
   const gameRunning = useGameRunning();
   const { mods, defaultMods, excludedMods, loadingMods, icons, reload, refreshInPlace, loadIcons } =
-    useProfileData(selectedProfile, isInitialized, reloadToken);
+    useProfileData(selectedProfile, isInitialized, reloadToken, filter === "excluded");
 
   async function loadProfilesAndSettings() {
     const [p, active, s] = await Promise.all([
@@ -92,6 +93,7 @@ export default function App() {
     setProfiles(p);
     setActiveProfile(active);
     setSelectedProfile(active);
+    setLanguage(s.language);
     setSettings(s);
   }
 
@@ -129,7 +131,7 @@ export default function App() {
   // Affiche l'erreur d'une operation ; renvoie true si elle a reussi
   function checkResult(result) {
     if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
+      showToast(t("common.errorPrefix", { error: result.error }), "error");
       return false;
     }
     return true;
@@ -140,7 +142,7 @@ export default function App() {
 
     if (checkResult(result)) {
       setActiveProfile(selectedProfile);
-      showToast(`Profil actif mis à jour : ${selectedProfile}`);
+      showToast(t("app.toast.activeProfileChanged", { profile: selectedProfile }));
     }
   }
 
@@ -154,34 +156,38 @@ export default function App() {
       setProfiles(await window.fs25.getProfiles());
       setSelectedProfile(cleanName);
       setOpenModal(null);
-      showToast(`Profil créé : ${cleanName}`);
+      showToast(t("app.toast.profileCreated", { profile: cleanName }));
     }
   }
 
   async function handleRepairLinks() {
     if (selectedProfile === DEFAULT_PROFILE) return;
 
-    showToast("Copie des mods favoris en cours...");
+    showToast(t("app.toast.repairInProgress"));
 
     const result = await window.fs25.repairLinks(selectedProfile);
     if (!checkResult(result)) return;
 
     const resynced = result.resyncedCount > 0
-      ? `, ${result.resyncedCount} resynchronisé(s)`
+      ? t("app.toast.repairResynced", { count: result.resyncedCount })
       : "";
 
     showToast(
-      `${result.linkedCount} favori(s) copiés, ${result.skippedExcluded} exclus ignorés, ${result.removedDuplicates} doublon(s) remplacé(s)${resynced}`
+      t("app.toast.repairDone", {
+        linked: t("app.count.favoritesCopied", { count: result.linkedCount }),
+        excluded: t("app.count.excludedSkipped", { count: result.skippedExcluded }),
+        duplicates: t("app.count.duplicatesReplaced", { count: result.removedDuplicates })
+      }) + resynced
     );
     if (result.keptNewerCount > 0) {
       showToast(
-        `${result.keptNewerCount} favori(s) plus récent(s) dans le profil conservé(s) : utilise « Garder cette version » pour les remonter dans les favoris`,
+        t("app.toast.repairKeptNewer", { count: result.keptNewerCount }),
         "info",
         8000
       );
     }
     showErrorList(
-      `${result.errors.length} favori(s) non traité(s) (jeu lancé ?)`,
+      t("app.toast.repairErrors", { count: result.errors.length }),
       result.errors
     );
 
@@ -192,14 +198,14 @@ export default function App() {
   async function handleRemoveLinks() {
     if (selectedProfile === DEFAULT_PROFILE) return;
 
-    showToast("Suppression des mods favoris en cours...");
+    showToast(t("app.toast.removeLinksInProgress"));
 
     const result = await window.fs25.removeLinks(selectedProfile);
     if (!checkResult(result)) return;
 
-    showToast(`${result.removedCount} mod(s) favori(s) supprimé(s)`);
+    showToast(t("app.toast.removeLinksDone", { count: result.removedCount }));
     showErrorList(
-      `${result.errors.length} favori(s) non supprimé(s) (jeu lancé ?)`,
+      t("app.toast.removeLinksErrors", { count: result.errors.length }),
       result.errors
     );
 
@@ -212,9 +218,9 @@ export default function App() {
   }
 
   async function handleRefreshProfile() {
-    showToast("Rafraîchissement en cours...");
+    showToast(t("app.toast.refreshInProgress"));
     await reload();
-    showToast(`Profil ${selectedProfile} rafraîchi`);
+    showToast(t("app.toast.refreshDone", { profile: selectedProfile }));
   }
 
   async function handleToggleExcluded(mod) {
@@ -226,8 +232,8 @@ export default function App() {
 
     showToast(
       result.excluded
-        ? `${mod.name} exclu du profil`
-        : `${mod.name} réintégré dans le profil`
+        ? t("app.toast.modExcluded", { name: mod.name })
+        : t("app.toast.modReintegrated", { name: mod.name })
     );
 
     await refreshInPlace();
@@ -240,10 +246,12 @@ export default function App() {
     if (!checkResult(result)) return;
 
     if (result.copiedCount > 0) {
-      const replaced = result.replacedCount > 0 ? ` (${result.replacedCount} version(s) remplacée(s))` : "";
-      showToast(`${mod.name} copié dans ${result.copiedCount} profil(s)${replaced}`, "success");
+      const replaced = result.replacedCount > 0
+        ? t("app.toast.copyReplaced", { count: result.replacedCount })
+        : "";
+      showToast(t("app.toast.copyDone", { name: mod.name, count: result.copiedCount }) + replaced, "success");
     }
-    showErrorList("Copie impossible", result.errors);
+    showErrorList(t("app.toast.copyErrors"), result.errors);
   }
 
   // Dependance manquante : reintegrer / lier le favori, ou copier depuis un autre profil
@@ -271,7 +279,7 @@ export default function App() {
 
     if (!checkResult(result)) return;
 
-    showToast(`${dependency.modName} ajouté au profil`, "success");
+    showToast(t("app.toast.dependencyAdded", { name: dependency.modName }), "success");
     await refreshInPlace();
   }
 
@@ -283,8 +291,8 @@ export default function App() {
     );
     if (!checkResult(result)) return;
 
-    showToast(`${result.excludedCount} favori(s) exclu(s) du profil`, "success");
-    showErrorList("Favoris non exclus", result.errors);
+    showToast(t("app.toast.favoritesExcluded", { count: result.excludedCount }), "success");
+    showErrorList(t("app.toast.favoritesExcludeErrors"), result.errors);
     await refreshInPlace();
   }
 
@@ -302,7 +310,7 @@ export default function App() {
     const result = await window.fs25.promoteToCommon(selectedProfile, mod.fileName);
     if (!checkResult(result)) return;
 
-    showToast(`${mod.name} ajouté aux mods favoris`, "success");
+    showToast(t("app.toast.promotedToFavorite", { name: mod.name }), "success");
     await refreshInPlace();
   }
 
@@ -314,13 +322,13 @@ export default function App() {
 
     if (result.removedFromProfiles > 0) {
       showToast(
-        `${mod.name} déplacé dans la corbeille et retiré de ${result.removedFromProfiles} profil(s)`,
+        t("app.toast.deletedAndRemoved", { name: mod.name, count: result.removedFromProfiles }),
         "success"
       );
     } else {
-      showToast(`${mod.name} déplacé dans la corbeille`, "success");
+      showToast(t("app.toast.deleted", { name: mod.name }), "success");
     }
-    showErrorList("Non retiré de certains profils", result.profileErrors);
+    showErrorList(t("app.toast.deleteProfileErrors"), result.profileErrors);
 
     await refreshInPlace();
   }
@@ -330,10 +338,10 @@ export default function App() {
     if (!checkResult(result)) return;
 
     showToast(
-      `${mod.name} v${mod.version} remonté dans les favoris et relié dans ${result.relinkedCount} profil(s)`,
+      t("app.toast.versionPromoted", { name: mod.name, version: mod.version, count: result.relinkedCount }),
       "success"
     );
-    showErrorList("Liens non mis à jour", result.errors);
+    showErrorList(t("app.toast.linksNotUpdated"), result.errors);
 
     await refreshInPlace();
   }
@@ -342,7 +350,7 @@ export default function App() {
     const result = await window.fs25.relinkFavorite(selectedProfile, mod.fileName);
     if (!checkResult(result)) return;
 
-    showToast(`${mod.name} : version des favoris reprise (v${mod.defaultVersion || "?"})`, "success");
+    showToast(t("app.toast.favoriteVersionRestored", { name: mod.name, version: mod.defaultVersion || "?" }), "success");
     await refreshInPlace();
   }
 
@@ -351,7 +359,7 @@ export default function App() {
 
     if (!result.success) {
       if (!result.canceled) {
-        showToast(`Erreur : ${result.error}`, "error");
+        showToast(t("common.errorPrefix", { error: result.error }), "error");
       }
       return null;
     }
@@ -364,7 +372,7 @@ export default function App() {
     if (!checkResult(result)) return;
 
     setOpenModal(null);
-    showToast("Réglages enregistrés", "success");
+    showToast(t("app.toast.settingsSaved"), "success");
     if (result.warning) {
       showToast(result.warning, "error", 10000);
     }
@@ -387,34 +395,37 @@ export default function App() {
     const cleanUrl = repoUrl.trim();
 
     if (!cleanUrl) {
-      showToast("Merci de saisir une URL GitHub", "error");
+      showToast(t("app.toast.githubUrlRequired"), "error");
       return;
     }
 
-    showToast("Téléchargement du mod GitHub en cours...");
+    showToast(t("app.toast.githubDownloading"));
 
     const result = await window.fs25.addGithubMod(selectedProfile, cleanUrl, includePrereleases);
     if (!checkResult(result)) return;
 
-    showToast(`${result.fileName} téléchargé depuis ${result.repo}`);
+    showToast(t("app.toast.githubDownloaded", { fileName: result.fileName, repo: result.repo }));
     setOpenModal(null);
     await refreshInPlace();
   }
 
   async function handleCheckGithubUpdates() {
-    showToast("Vérification des mises à jour GitHub en cours...");
+    showToast(t("app.toast.githubChecking"));
 
     const result = await window.fs25.checkGithubUpdates(selectedProfile);
     if (!checkResult(result)) return;
 
     if (result.checkedCount === 0) {
-      showToast("Aucun mod GitHub suivi sur ce profil");
+      showToast(t("app.toast.githubNoneTracked"));
     } else if (result.updateCount > 0) {
       showToast(
-        `${result.updateCount} mise(s) à jour disponible(s) sur ${result.checkedCount} mod(s) vérifié(s)`
+        t("app.toast.githubUpdatesFound", {
+          updates: t("app.count.updatesAvailable", { count: result.updateCount }),
+          checked: t("app.count.modsChecked", { count: result.checkedCount })
+        })
       );
     } else {
-      showToast(`Aucune mise à jour trouvée sur ${result.checkedCount} mod(s)`);
+      showToast(t("app.toast.githubNoUpdate", { count: result.checkedCount }));
     }
 
     await refreshInPlace();
@@ -428,19 +439,19 @@ export default function App() {
   async function handleUpdateGithubMod(mod) {
     if (!mod.github?.tracked || !mod.github?.updateAvailable) return;
 
-    showToast(`Mise à jour de ${mod.name} en cours...`);
+    showToast(t("app.toast.githubUpdating", { name: mod.name }));
 
     const result = await window.fs25.updateGithubMod(selectedProfile, mod.fileName);
     if (!checkResult(result)) return;
 
     if (result.targetProfile === DEFAULT_PROFILE) {
       showToast(
-        `${mod.name} mis à jour dans les favoris (Default) et ${result.relinkedCount} profil(s)`,
+        t("app.toast.githubFavoriteUpdated", { name: mod.name, count: result.relinkedCount }),
         "success"
       );
-      showErrorList("Liens non mis à jour", result.relinkErrors);
+      showErrorList(t("app.toast.linksNotUpdated"), result.relinkErrors);
     } else {
-      showToast(`${mod.name} mis à jour`, "success");
+      showToast(t("app.toast.githubUpdated", { name: mod.name }), "success");
     }
 
     await refreshInPlace();
@@ -455,7 +466,7 @@ export default function App() {
 
     if (!result.success) {
       if (!result.canceled) {
-        showToast(`Erreur : ${result.error}`, "error");
+        showToast(t("common.errorPrefix", { error: result.error }), "error");
       }
       return null;
     }
@@ -468,19 +479,19 @@ export default function App() {
     const cleanUrl = url.trim();
 
     if (!cleanZipPath) {
-      showToast("Merci de sélectionner un fichier ZIP", "error");
+      showToast(t("app.toast.zipRequired"), "error");
       return;
     }
 
     if (!cleanUrl) {
-      showToast("Merci de saisir une URL", "error");
+      showToast(t("app.toast.urlRequired"), "error");
       return;
     }
 
     const result = await window.fs25.addExternalMod(selectedProfile, cleanZipPath, cleanUrl);
     if (!checkResult(result)) return;
 
-    showToast(`${result.fileName} ajouté comme mod externe`, "success");
+    showToast(t("app.toast.externalAdded", { fileName: result.fileName }), "success");
     setOpenModal(null);
     await refreshInPlace();
   }
@@ -527,7 +538,7 @@ export default function App() {
   });
 
   return (
-    <div className="app">
+    <div className="app" key={settings?.language}>
       <div className="app-header">
         <div
           style={{
@@ -541,21 +552,21 @@ export default function App() {
           <div>
             <h1 style={{ margin: 0, fontSize: "28px" }}>FS25 Mod Manager</h1>
             <div style={{ marginTop: "6px", opacity: 0.85 }}>
-              Profil actif : <strong>{activeProfile}</strong>
+              {t("app.activeProfile")} <strong>{activeProfile}</strong>
             </div>
             {gameRunning && (
               <div
                 style={{ marginTop: "6px", fontSize: "13px", color: "#ffd28a" }}
-                title="Le jeu réécrit gameSettings.xml en quittant et verrouille les mods chargés"
+                title={t("app.gameRunningTooltip")}
               >
-                🎮 FS25 est lancé : changement de profil désactivé, certaines opérations sur les mods peuvent échouer
+                🎮 {t("app.gameRunning")}
               </div>
             )}
           </div>
 
           <div style={{ minWidth: "280px" }}>
             <label htmlFor="profile-select" className="field-label">
-              Profil sélectionné
+              {t("app.selectedProfile")}
             </label>
             <select
               id="profile-select"
@@ -577,7 +588,7 @@ export default function App() {
 
             {hasPendingChange && (
               <div style={{ marginTop: "8px", fontSize: "12px", color: "#cccccc" }}>
-                Changement non appliqué
+                {t("app.pendingChange")}
               </div>
             )}
           </div>
@@ -588,58 +599,62 @@ export default function App() {
             <ActionButton
               onClick={handleChangeProfile}
               disabled={!hasPendingChange || gameRunning}
-              title={gameRunning ? "Ferme FS25 avant de changer de profil" : undefined}
+              title={gameRunning ? t("app.closeGameFirst") : undefined}
+              icon="🔀"
             >
-              Changer de profil
+              {t("app.button.changeProfile")}
             </ActionButton>
 
-            <ActionButton onClick={() => setOpenModal("createProfile")}>
-              Créer un profil
+            <ActionButton icon="➕" onClick={() => setOpenModal("createProfile")}>
+              {t("app.button.createProfile")}
             </ActionButton>
 
-            <ActionButton onClick={handleOpenProfileFolder}>
-              Ouvrir le dossier
+            <ActionButton icon="📂" onClick={handleOpenProfileFolder}>
+              {t("app.button.openFolder")}
             </ActionButton>
 
-            <ActionButton onClick={handleRefreshProfile}>
-              Rafraîchir
+            <ActionButton icon="🔄" onClick={handleRefreshProfile}>
+              {t("app.button.refresh")}
             </ActionButton>
 
             <ActionButton
               onClick={handleLaunchGame}
               disabled={!settings?.launchUrl}
-              title={settings?.launchUrl ? settings.launchUrl : "Aucune URL de lancement : voir Réglages"}
+              title={settings?.launchUrl ? settings.launchUrl : t("app.noLaunchUrl")}
+              icon="▶️"
             >
-              Lancer le jeu
+              {t("app.button.launchGame")}
             </ActionButton>
 
-            <ActionButton onClick={() => setOpenModal("settings")}>
-              ⚙ Réglages
+            <ActionButton icon="⚙️" onClick={() => setOpenModal("settings")}>
+              {t("app.button.settings")}
             </ActionButton>
           </div>
 
           <div className="button-row">
-            <ActionButton onClick={handleRepairLinks} disabled={isDefaultProfile}>
-              Copier les favoris dans le profil
+            <ActionButton icon="⭐" onClick={handleRepairLinks} disabled={isDefaultProfile}>
+              {t("app.button.repairLinks")}
             </ActionButton>
 
             <ActionButton
               onClick={handleRemoveLinks}
               disabled={commonMods === 0 || isDefaultProfile}
               variant="danger"
+              icon="🗑️"
             >
-              Supprimer les favoris du profil
+              {t("app.button.removeLinks")}
             </ActionButton>
 
             <ActionButton
               onClick={() => setOpenModal("savegames")}
-              title="Mods manquants ou inutilisés par les parties qui utilisent ce profil"
+              title={t("app.savegamesTooltip")}
+              icon="🗂️"
             >
-              🗂 Analyser les sauvegardes
+              {t("app.button.savegames")}
             </ActionButton>
 
-            <ActionButton onClick={() => setOpenModal("github")}>
-              Ajouter un mod GitHub
+            <ActionButton icon={<GitHubIcon size={14} opacity={1} />} onClick={() => setOpenModal("github")}>
+              {t("app.button.addGithubMod")}
             </ActionButton>
 
             <ActionButton
@@ -647,15 +662,16 @@ export default function App() {
               disabled={!hasGithubTrackedMods}
               title={
                 hasGithubTrackedMods
-                  ? "Vérifier les mises à jour des mods GitHub"
-                  : "Aucun mod GitHub suivi sur ce profil"
+                  ? t("app.checkGithubTooltip")
+                  : t("app.toast.githubNoneTracked")
               }
+              icon="🔍"
             >
-              Vérifier les MAJ GitHub
+              {t("app.button.checkGithub")}
             </ActionButton>
 
-            <ActionButton onClick={() => setOpenModal("external")}>
-              Ajouter un mod externe
+            <ActionButton icon="🌍" onClick={() => setOpenModal("external")}>
+              {t("app.button.addExternalMod")}
             </ActionButton>
           </div>
         </div>
@@ -672,7 +688,7 @@ export default function App() {
 
         <div style={{ display: "flex", gap: "10px", marginTop: "10px", flexWrap: "wrap" }}>
           <StatCard
-            label="Tous les mods"
+            label={t("app.stats.all")}
             icon="📁"
             value={mods.length}
             onClick={() => setFilter("all")}
@@ -680,13 +696,13 @@ export default function App() {
           />
 
           <StatCard
-            label="Taille"
+            label={t("app.stats.size")}
             value={formatSizeStats(totalSize)}
             icon="💾"
           />
 
           <StatCard
-            label="Favoris"
+            label={t("app.stats.favorites")}
             icon="⭐"
             value={commonMods}
             onClick={!isDefaultProfile ? () => setFilter("common") : undefined}
@@ -695,7 +711,7 @@ export default function App() {
           />
 
           <StatCard
-            label="Locaux"
+            label={t("app.stats.local")}
             icon="📦"
             value={localMods}
             onClick={() => setFilter("local")}
@@ -703,7 +719,7 @@ export default function App() {
           />
 
           <StatCard
-            label="Exclus"
+            label={t("app.stats.excluded")}
             icon="🚫"
             value={excludedMods.length}
             onClick={!isDefaultProfile ? () => setFilter("excluded") : undefined}
@@ -712,7 +728,7 @@ export default function App() {
           />
 
           <StatCard
-            label="Suivis GitHub"
+            label={t("app.stats.github")}
             icon={<GitHubIcon size={20} />}
             value={githubTrackedCount}
             onClick={() => setFilter("githubTracked")}
@@ -720,7 +736,7 @@ export default function App() {
           />
 
           <StatCard
-            label="Mods externes"
+            label={t("app.stats.external")}
             icon="🌍"
             value={externalModsCount}
             onClick={() => setFilter("external")}
@@ -731,7 +747,7 @@ export default function App() {
         <input
           type="text"
           className="text-input text-input--panel"
-          placeholder="Rechercher un mod..."
+          placeholder={t("app.searchPlaceholder")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{ width: "300px", marginTop: "10px" }}
@@ -745,7 +761,7 @@ export default function App() {
           </div>
         ) : displayedMods.length === 0 ? (
           <div style={{ opacity: 0.6 }}>
-            Aucun mod trouvé pour ce profil.
+            {t("app.noMods")}
           </div>
         ) : (
           <div className="mod-grid">

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Modal } from "../components/Modal";
 import { ActionButton } from "../components/Controls";
+import { t } from "../../locales/i18n";
 
 export function GithubModModal({ profile, onCancel, onSubmit }) {
   const [repoUrl, setRepoUrl] = useState("");
@@ -8,19 +9,19 @@ export function GithubModModal({ profile, onCancel, onSubmit }) {
 
   return (
     <Modal
-      title="Ajouter un mod GitHub"
+      title={t("githubModal.title")}
       width={460}
       actions={
         <>
-          <ActionButton onClick={onCancel}>Annuler</ActionButton>
+          <ActionButton onClick={onCancel}>{t("common.cancel")}</ActionButton>
           <ActionButton onClick={() => onSubmit(repoUrl, includePrereleases)}>
-            Télécharger
+            {t("githubModal.download")}
           </ActionButton>
         </>
       }
     >
       <div style={{ fontSize: "13px", opacity: 0.85, marginBottom: "10px" }}>
-        Le ZIP du mod sera téléchargé dans le profil sélectionné :{" "}
+        {t("githubModal.target")}{" "}
         <strong>{profile}</strong>
       </div>
 
@@ -39,11 +40,11 @@ export function GithubModModal({ profile, onCancel, onSubmit }) {
           checked={includePrereleases}
           onChange={(e) => setIncludePrereleases(e.target.checked)}
         />
-        Inclure les pre-releases
+        {t("githubModal.includePrereleases")}
       </label>
 
       <div className="hint" style={{ marginBottom: "16px" }}>
-        Si cette option est décochée, seule la dernière release stable sera utilisée.
+        {t("githubModal.prereleasesHint")}
       </div>
     </Modal>
   );

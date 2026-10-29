@@ -47,7 +47,8 @@ const VARIANT_STYLES = {
   muted: { background: "#555", color: "#fff" }
 };
 
-export function ActionButton({ children, onClick, style = {}, variant, disabled = false, title }) {
+// icon : emoji ou petit composant (logo GitHub) affiche avant le libelle
+export function ActionButton({ children, icon, onClick, style = {}, variant, disabled = false, title }) {
   const baseStyle = {
     background: colors.button,
     color: colors.buttonText,
@@ -56,7 +57,10 @@ export function ActionButton({ children, onClick, style = {}, variant, disabled 
     borderRadius: "8px",
     padding: "8px 12px",
     cursor: disabled ? "default" : "pointer",
-    transition: "all 0.2s"
+    transition: "all 0.2s",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px"
   };
 
   const disabledStyle = disabled
@@ -80,6 +84,7 @@ export function ActionButton({ children, onClick, style = {}, variant, disabled 
         ...disabledStyle
       }}
     >
+      {icon && <span aria-hidden="true" style={{ display: "inline-flex" }}>{icon}</span>}
       {children}
     </button>
   );

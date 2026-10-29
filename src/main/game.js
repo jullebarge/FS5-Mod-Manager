@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const { execFile } = require('child_process');
 const { DEFAULT_PROFILE, getBasePath, getModsCartesPath, getModsFolder, hasCustomModsFolder } = require('./settings');
+const { t } = require('../locales/i18n');
 
 const MODS_OVERRIDE_PATTERN = /<modsDirectoryOverride\b[^>]*?(?:\/>|>\s*<\/modsDirectoryOverride>)/;
 const GAME_PROCESS_PREFIX = "farmingsimulator2025";
@@ -89,7 +90,7 @@ async function setActiveProfile(profileName) {
     if (await isGameRunning()) {
         return {
             success: false,
-            error: "FS25 est lancé : il écraserait ce changement en quittant. Ferme le jeu puis réessaie."
+            error: t("errors.gameRunning")
         };
     }
 
@@ -99,7 +100,7 @@ async function setActiveProfile(profileName) {
     if (!MODS_OVERRIDE_PATTERN.test(content)) {
         return {
             success: false,
-            error: "Balise <modsDirectoryOverride> introuvable dans gameSettings.xml"
+            error: t("errors.noModsOverrideTag")
         };
     }
 
@@ -117,7 +118,7 @@ async function setActiveProfile(profileName) {
 
     if (targetDir) {
         if (!fs.existsSync(targetDir)) {
-            return { success: false, error: "Dossier du profil introuvable" };
+            return { success: false, error: t("errors.profileFolderNotFound") };
         }
 
         const targetPath = targetDir.replace(/\\/g, "/");

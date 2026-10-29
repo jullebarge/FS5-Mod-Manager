@@ -8,6 +8,7 @@ const { readXmlAttribute, unescapeXml } = require('./game');
 const { readExcludedModsFromProfile } = require('./profiles');
 const { getMods } = require('./mods');
 const { getModNameFromFile, getProfileModNames, findAvailability } = require('./modLocator');
+const { t } = require('../locales/i18n');
 
 const SAVEGAME_DIR_PATTERN = /^savegame\d+$/i;
 // Fichiers de la partie qui referencent les mods des objets possedes (modName="...")
@@ -210,7 +211,7 @@ function analyzeSavegame(profile, savegameId) {
     const savegame = savegames.find((s) => s.id === savegameId);
 
     if (!savegame) {
-        return { success: false, error: "Sauvegarde introuvable" };
+        return { success: false, error: t("errors.savegameNotFound") };
     }
 
     const profileModNames = getProfileModNames();

@@ -1,69 +1,51 @@
+import { getLocaleTag, t } from "../locales/i18n";
+
 // Windows ignore la casse des noms de fichiers
 export function includesFileName(list, fileName) {
   const name = String(fileName || "").toLowerCase();
   return list.some((item) => String(item || "").toLowerCase() === name);
 }
 
-export function formatSizeStats(bytes) {
-  const mb = bytes / (1024 * 1024);
+const KB = 1024;
+const MB = KB * 1024;
+const GB = MB * 1024;
 
-  if (mb >= 1024) {
-    const gb = mb / 1024;
-    return gb.toLocaleString("fr-FR", {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1
-    }) + " Go";
-  }
-
-  return mb.toLocaleString("fr-FR", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1
-  }) + " Mo";
+function formatNumber(value, fractionDigits) {
+  return value.toLocaleString(getLocaleTag(), {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits
+  });
 }
 
+// Taille totale (cartes de statistiques) : en Mo, ou en Go au-dela de 1 Go
+export function formatSizeStats(bytes) {
+  if (bytes >= GB) {
+    return `${formatNumber(bytes / GB, 1)} ${t("units.GB")}`;
+  }
+  return `${formatNumber(bytes / MB, 1)} ${t("units.MB")}`;
+}
+
+// Taille d'un mod, dans l'unite la plus lisible
 export function formatSize(bytes) {
-  if (!bytes) return "0 o";
+  if (!bytes) return `0 ${t("units.B")}`;
 
-  const kb = 1024;
-  const mb = kb * 1024;
-  const gb = mb * 1024;
+  if (bytes >= GB) return `${formatNumber(bytes / GB, 1)} ${t("units.GB")}`;
+  if (bytes >= MB) return `${formatNumber(bytes / MB, 1)} ${t("units.MB")}`;
+  if (bytes >= KB) return `${formatNumber(bytes / KB, 0)} ${t("units.KB")}`;
 
-  if (bytes >= gb) {
-    return bytes.toLocaleString("fr-FR", {
-      style: "unit",
-      unit: "gigabyte",
-      unitDisplay: "narrow",
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1
-    });
-  }
-
-  if (bytes >= mb) {
-    return (bytes / mb).toLocaleString("fr-FR", {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1
-    }) + " Mo";
-  }
-
-  if (bytes >= kb) {
-    return (bytes / kb).toLocaleString("fr-FR", {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }) + " Ko";
-  }
-
-  return bytes.toLocaleString("fr-FR") + " o";
+  return `${formatNumber(bytes, 0)} ${t("units.B")}`;
 }
 
 const STATUS_DISPLAY = {
-  "common-linked": { icon: "⭐", tooltip: "Mod favori lié", color: "#A8B655" },
-  "common-excluded": { icon: "🚫", tooltip: "Mod favori exclu", color: "#d9534f" },
-  local: { icon: "📦", tooltip: "Mod local", color: "#cccccc" },
-  directory: { icon: "📁", tooltip: "Mod dossier (dézippé)", color: "#5bc0de" }
+  "common-linked": { icon: "⭐", tooltipKey: "status.favoriteLinked", color: "#A8B655" },
+  "common-excluded": { icon: "🚫", tooltipKey: "status.favoriteExcluded", color: "#d9534f" },
+  local: { icon: "📦", tooltipKey: "status.local", color: "#cccccc" },
+  directory: { icon: "📁", tooltipKey: "status.directory", color: "#5bc0de" }
 };
 
-const UNKNOWN_STATUS = { icon: "❓", tooltip: "Statut inconnu", color: "#999999" };
+const UNKNOWN_STATUS = { icon: "❓", tooltipKey: "status.unknown", color: "#999999" };
 
 export function getStatusDisplay(status) {
-  return STATUS_DISPLAY[status] || UNKNOWN_STATUS;
+  const display = STATUS_DISPLAY[status] || UNKNOWN_STATUS;
+  return { ...display, tooltip: t(display.tooltipKey) };
 }

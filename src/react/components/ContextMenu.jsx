@@ -1,5 +1,6 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_PROFILE } from "../theme";
+import { t } from "../../locales/i18n";
 
 function MenuItem({ children, onClick }) {
   return (
@@ -78,7 +79,7 @@ export function ContextMenu({
               onClose();
             }}
           >
-            📦 Passer en favori
+            📦 {t("menu.promoteToFavorite")}
           </MenuItem>
         )}
 
@@ -89,7 +90,7 @@ export function ContextMenu({
               onClose();
             }}
           >
-            📋 Copier vers un autre profil
+            📋 {t("menu.copyToProfiles")}
           </MenuItem>
         )}
 
@@ -100,7 +101,7 @@ export function ContextMenu({
               onClose();
             }}
           >
-            🚫 Exclure du profil
+            🚫 {t("menu.exclude")}
           </MenuItem>
         )}
 
@@ -111,7 +112,7 @@ export function ContextMenu({
               onClose();
             }}
           >
-            ✅ Réintégrer dans le profil
+            ✅ {t("menu.reintegrate")}
           </MenuItem>
         )}
 
@@ -123,7 +124,7 @@ export function ContextMenu({
                 onClose();
               }}
             >
-              ⬆ Garder cette version (remonter dans les favoris)
+              ⬆ {t("menu.keepProfileVersion")}
             </MenuItem>
             <MenuItem
               onClick={() => {
@@ -131,7 +132,7 @@ export function ContextMenu({
                 onClose();
               }}
             >
-              ⬇ Reprendre la version des favoris
+              ⬇ {t("menu.useFavoriteVersion")}
             </MenuItem>
           </>
         )}
@@ -143,7 +144,7 @@ export function ContextMenu({
               onClose();
             }}
           >
-            🔗 Ouvrir le lien GitHub
+            🔗 {t("menu.openGithub")}
           </MenuItem>
         )}
 
@@ -154,7 +155,7 @@ export function ContextMenu({
               onClose();
             }}
           >
-            ⬆ Mettre à jour depuis GitHub
+            ⬆ {t("menu.updateFromGithub")}
           </MenuItem>
         )}
 
@@ -165,7 +166,7 @@ export function ContextMenu({
               onClose();
             }}
           >
-            🌍 Ouvrir le lien externe
+            🌍 {t("menu.openExternal")}
           </MenuItem>
         )}
 
@@ -175,7 +176,7 @@ export function ContextMenu({
             onClose();
           }}
         >
-          {mod.isDirectory ? "📁 Ouvrir le dossier" : "🗜 Ouvrir le zip"}
+          {mod.isDirectory ? `📁 ${t("menu.openFolder")}` : `🗜 ${t("menu.openZip")}`}
         </MenuItem>
 
         {(mod.status === "local" || mod.status === "common-linked" || mod.status === "directory") && (
@@ -185,7 +186,7 @@ export function ContextMenu({
               onClose();
             }}
           >
-            🗑 Supprimer
+            🗑 {t("menu.delete")}
           </MenuItem>
         )}
       </div>

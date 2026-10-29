@@ -1,18 +1,19 @@
 import React, { useState } from "react";
 import { Modal } from "../components/Modal";
 import { ActionButton } from "../components/Controls";
+import { t } from "../../locales/i18n";
 
 export function CreateProfileModal({ onCancel, onCreate }) {
   const [name, setName] = useState("");
 
   return (
     <Modal
-      title="Créer un profil"
+      title={t("createProfile.title")}
       width={340}
       actions={
         <>
-          <ActionButton onClick={onCancel}>Annuler</ActionButton>
-          <ActionButton onClick={() => onCreate(name)}>Valider</ActionButton>
+          <ActionButton onClick={onCancel}>{t("common.cancel")}</ActionButton>
+          <ActionButton onClick={() => onCreate(name)}>{t("common.confirm")}</ActionButton>
         </>
       }
     >
@@ -21,7 +22,7 @@ export function CreateProfileModal({ onCancel, onCreate }) {
         className="text-input"
         value={name}
         onChange={(e) => setName(e.target.value)}
-        placeholder="Nom du profil"
+        placeholder={t("createProfile.placeholder")}
         style={{ width: "100%", marginBottom: "16px" }}
       />
     </Modal>

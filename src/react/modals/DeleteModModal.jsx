@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Modal } from "../components/Modal";
 import { ActionButton } from "../components/Controls";
+import { t } from "../../locales/i18n";
 
 // Dans Default, un mod peut etre un favori lie dans d'autres profils : on propose de l'y retirer aussi
 export function DeleteModModal({ mod, isDefaultProfile, onCancel, onConfirm }) {
@@ -25,43 +26,42 @@ export function DeleteModModal({ mod, isDefaultProfile, onCancel, onConfirm }) {
 
   return (
     <Modal
-      title={`Supprimer ${mod.name} ?`}
+      title={t("deleteModal.title", { name: mod.name })}
       width={460}
       actions={
         <>
-          <ActionButton onClick={onCancel}>Annuler</ActionButton>
+          <ActionButton onClick={onCancel}>{t("common.cancel")}</ActionButton>
           <ActionButton
             disabled={needsUsage && !usage}
             onClick={() => onConfirm({ removeFromProfiles: isLinkedElsewhere && removeFromProfiles })}
             variant="danger"
           >
-            Supprimer
+            {t("common.delete")}
           </ActionButton>
         </>
       }
     >
       <div style={{ fontSize: "13px", opacity: 0.85, lineHeight: "1.5", marginBottom: "16px" }}>
-        {mod.isDirectory ? "Le dossier" : "Le fichier"}{" "}
-        <strong>{mod.fileName}</strong> sera déplacé dans la corbeille de Windows.
+        {mod.isDirectory ? t("deleteModal.folder") : t("deleteModal.file")}{" "}
+        <strong>{mod.fileName}</strong> {t("deleteModal.toTrash")}
       </div>
 
       {mod.status === "common-linked" && (
         <div className="hint" style={{ marginBottom: "16px" }}>
-          Le mod reste dans les favoris (Default) et reviendra à la prochaine copie des
-          favoris. Pour le retirer durablement de ce profil, utilise plutôt « Exclure du profil ».
+          {t("deleteModal.linkedFavoriteHint")}
         </div>
       )}
 
       {needsUsage && !usage && (
         <div className="hint" style={{ marginBottom: "16px" }}>
-          Recherche des profils qui utilisent ce favori...
+          {t("deleteModal.searchingUsage")}
         </div>
       )}
 
       {isLinkedElsewhere && (
         <div style={{ fontSize: "13px", lineHeight: "1.4", marginBottom: "16px" }}>
           <div style={{ marginBottom: "8px" }}>
-            Ce favori est lié dans {usage.linked.length} profil(s) :{" "}
+            {t("deleteModal.linkedIn", { count: usage.linked.length })}{" "}
             <strong>{usage.linked.join(", ")}</strong>
           </div>
           <label className="checkbox-label">
@@ -70,14 +70,14 @@ export function DeleteModModal({ mod, isDefaultProfile, onCancel, onConfirm }) {
               checked={removeFromProfiles}
               onChange={(e) => setRemoveFromProfiles(e.target.checked)}
             />
-            Le retirer aussi de ces profils
+            {t("deleteModal.removeFromProfiles")}
           </label>
         </div>
       )}
 
       {usage && usage.linked.length === 0 && (
         <div className="hint" style={{ marginBottom: "16px" }}>
-          Aucun profil n'utilise ce mod comme favori.
+          {t("deleteModal.notUsed")}
         </div>
       )}
     </Modal>

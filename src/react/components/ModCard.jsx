@@ -2,6 +2,7 @@ import React, { memo } from "react";
 import { Spinner } from "./Icons";
 import { Badge } from "./Controls";
 import { formatSize, getStatusDisplay } from "../utils";
+import { t } from "../../locales/i18n";
 
 // icon : undefined = en cours de chargement, null = pas d'icone
 export const ModCard = memo(function ModCard({
@@ -17,7 +18,7 @@ export const ModCard = memo(function ModCard({
     <div
       className="mod-card"
       onClick={(e) => onCardClick(mod, e)}
-      title="Cliquer pour ouvrir les actions"
+      title={t("card.openActions")}
     >
       <div
         style={{
@@ -42,6 +43,8 @@ export const ModCard = memo(function ModCard({
           src={icon}
           alt={mod.name}
           className="mod-card-image"
+          loading="lazy"
+          decoding="async"
           style={{ objectFit: "contain", display: "block" }}
         />
       ) : (
@@ -62,7 +65,7 @@ export const ModCard = memo(function ModCard({
         <div className="mod-card-meta">v{mod.version}</div>
         <div className="mod-card-meta">{mod.author}</div>
         <div className="mod-card-meta">
-          {mod.isDirectory ? "Dossier" : formatSize(mod.size || 0)}
+          {mod.isDirectory ? t("card.folder") : formatSize(mod.size || 0)}
         </div>
 
         <div
@@ -74,21 +77,21 @@ export const ModCard = memo(function ModCard({
           }}
         >
           {github?.tracked && (
-            <Badge background="#444" title="Mod suivi via GitHub">
+            <Badge background="#444" title={t("card.githubTooltip")}>
               GitHub
             </Badge>
           )}
 
           {external?.tracked && (
-            <Badge background="#355c7d" title="Mod externe suivi">
-              Externe
+            <Badge background="#355c7d" title={t("card.externalTooltip")}>
+              {t("card.external")}
             </Badge>
           )}
 
           {github?.includePrereleases && (
             <Badge
               background="#5b3d1f"
-              title="Le suivi utilise aussi les pre-releases"
+              title={t("card.prereleaseTooltip")}
             >
               pre-release
             </Badge>
@@ -96,43 +99,43 @@ export const ModCard = memo(function ModCard({
 
           {github?.lastError && (
             <Badge background="#8b2f2f" title={github.lastError}>
-              Erreur GitHub
+              {t("card.githubError")}
             </Badge>
           )}
 
           {github?.updateAvailable && !github?.lastError && (
             <Badge
               background="#a86b2a"
-              title="Une mise à jour GitHub est disponible"
+              title={t("card.updateAvailableTooltip")}
             >
-              MAJ dispo
+              {t("card.updateAvailable")}
             </Badge>
           )}
 
           {mod.missingDependencies?.length > 0 && (
             <Badge
               background="#8b2f2f"
-              title={`Mods requis absents de ce profil : ${mod.missingDependencies.map((d) => d.modName).join(", ")}`}
+              title={t("card.missingDependencyTooltip", { mods: mod.missingDependencies.map((d) => d.modName).join(", ") })}
             >
-              Dépendance manquante
+              {t("card.missingDependency")}
             </Badge>
           )}
 
           {mod.isDuplicateCopy && (
             <Badge
               background="#555"
-              title="Fichier identique au favori, mais copié au lieu d'être lié : « Copier les favoris » le remplace par un lien et libère la place"
+              title={t("card.duplicateCopyTooltip")}
             >
-              Copie
+              {t("card.duplicateCopy")}
             </Badge>
           )}
 
           {mod.isOutOfSync && (
             <Badge
               background={mod.syncDirection === "profile-newer" ? "#2f6b3a" : "#a86b2a"}
-              title={`Version des favoris : v${mod.defaultVersion || "?"}`}
+              title={t("card.favoriteVersionTooltip", { version: mod.defaultVersion || "?" })}
             >
-              {mod.syncDirection === "profile-newer" ? "Plus récent que le favori" : "Désynchro"}
+              {mod.syncDirection === "profile-newer" ? t("card.newerThanFavorite") : t("card.outOfSync")}
             </Badge>
           )}
         </div>

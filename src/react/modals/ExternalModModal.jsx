@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Modal } from "../components/Modal";
 import { ActionButton } from "../components/Controls";
+import { t } from "../../locales/i18n";
 
 // onPickZip renvoie le chemin choisi, ou null si annule
 export function ExternalModModal({ profile, onCancel, onPickZip, onSubmit }) {
@@ -16,17 +17,17 @@ export function ExternalModModal({ profile, onCancel, onPickZip, onSubmit }) {
 
   return (
     <Modal
-      title="Ajouter un mod externe"
+      title={t("externalModal.title")}
       width={520}
       actions={
         <>
-          <ActionButton onClick={onCancel}>Annuler</ActionButton>
-          <ActionButton onClick={() => onSubmit(zipPath, url)}>Ajouter</ActionButton>
+          <ActionButton onClick={onCancel}>{t("common.cancel")}</ActionButton>
+          <ActionButton onClick={() => onSubmit(zipPath, url)}>{t("common.add")}</ActionButton>
         </>
       }
     >
       <div style={{ fontSize: "13px", opacity: 0.85, marginBottom: "12px" }}>
-        Le ZIP sera copié dans le profil sélectionné :{" "}
+        {t("externalModal.target")}{" "}
         <strong>{profile}</strong>
       </div>
 
@@ -36,11 +37,11 @@ export function ExternalModModal({ profile, onCancel, onPickZip, onSubmit }) {
           className="text-input"
           value={zipPath}
           readOnly
-          placeholder="Aucun ZIP sélectionné"
+          placeholder={t("externalModal.noZip")}
           style={{ flex: 1 }}
         />
 
-        <ActionButton onClick={pickZip}>Choisir un ZIP</ActionButton>
+        <ActionButton onClick={pickZip}>{t("externalModal.pickZip")}</ActionButton>
       </div>
 
       <input
@@ -53,7 +54,7 @@ export function ExternalModModal({ profile, onCancel, onPickZip, onSubmit }) {
       />
 
       <div className="hint" style={{ marginBottom: "16px" }}>
-        Exemples : page KingMods, page de forum, page perso du mod.
+        {t("externalModal.urlHint")}
       </div>
     </Modal>
   );

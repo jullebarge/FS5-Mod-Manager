@@ -7,6 +7,7 @@ const { readManagedLinks } = require('./profiles');
 const { githubRegistry, matchesEntry } = require('./registry');
 const { HTTP_TIMEOUT, downloadFile } = require('./download');
 const { relinkFavoriteInProfiles } = require('./links');
+const { t } = require('../locales/i18n');
 
 function parseGitHubRepoUrl(repoUrl) {
     const cleanUrl = (repoUrl || "").trim();
@@ -14,7 +15,7 @@ function parseGitHubRepoUrl(repoUrl) {
     const match = cleanUrl.match(/^https:\/\/github\.com\/([^\/]+)\/([^\/?#]+?)(?:\.git)?(?:\/|$)/i);
 
     if (!match) {
-        throw new Error("URL GitHub invalide. Format attendu : https://github.com/owner/repo");
+        throw new Error(t("errors.github.invalidRepoUrl"));
     }
 
     return {
@@ -42,12 +43,12 @@ function githubRequestJson(url) {
             res.on("end", () => {
                 try {
                     if (res.statusCode && res.statusCode >= 400) {
-                        let message = `Erreur GitHub (${res.statusCode})`;
+                        let message = t("errors.github.httpError", { status: res.statusCode });
 
                         try {
                             const parsed = JSON.parse(data);
                             if (parsed && parsed.message) {
-                                message = `Erreur GitHub : ${parsed.message}`;
+                                message = t("errors.github.apiError", { message: parsed.message });
                             }
                         } catch {}
 
@@ -63,7 +64,7 @@ function githubRequestJson(url) {
         });
 
         req.setTimeout(HTTP_TIMEOUT, () => {
-            req.destroy(new Error("GitHub ne répond pas (délai dépassé)"));
+            req.destroy(new Error(t("errors.github.timeout")));
         });
 
         req.on("error", reject);
@@ -81,7 +82,7 @@ async function fetchGitHubReleaseForInstall(owner, repo, includePrereleases) {
         : null;
 
     if (!release) {
-        throw new Error("Aucune release exploitable trouvee sur ce depot");
+        throw new Error(t("errors.github.noRelease"));
     }
 
     return release;
@@ -101,7 +102,7 @@ function isProbablySourceZip(assetName) {
 
 function selectGithubModAsset(release) {
     if (!release || !Array.isArray(release.assets) || release.assets.length === 0) {
-        throw new Error("Cette release ne contient aucun asset");
+        throw new Error(t("errors.github.noAsset"));
     }
 
     const zipAssets = release.assets.filter((asset) =>
@@ -112,7 +113,7 @@ function selectGithubModAsset(release) {
     );
 
     if (zipAssets.length === 0) {
-        throw new Error("Aucun fichier ZIP trouve dans la release");
+        throw new Error(t("errors.github.noZip"));
     }
 
     const isFs25Zip = (asset) => /^fs25_.*\.zip$/i.test(asset.name);
@@ -129,7 +130,7 @@ function selectGithubModAsset(release) {
             return fs25ZipAssets[0];
         }
 
-        throw new Error("Plusieurs ZIP valides ont ete trouves dans la release");
+        throw new Error(t("errors.github.severalZips"));
     }
 
     if (zipAssets.length === 1) {
@@ -142,7 +143,7 @@ function selectGithubModAsset(release) {
         return fs25ZipAssets[0];
     }
 
-    throw new Error("Impossible de determiner automatiquement quel ZIP correspond au mod");
+    throw new Error(t("errors.github.ambiguousZip"));
 }
 
 function getReleaseTag(release) {
@@ -219,13 +220,13 @@ async function addGithubMod(profile, repoUrl, includePrereleases = false) {
     const targetProfile = (profile || "").trim();
 
     if (!targetProfile) {
-        return { success: false, error: "Profil invalide" };
+        return { success: false, error: t("errors.invalidProfile") };
     }
 
     const targetFolder = getModsFolder(targetProfile);
 
     if (!fs.existsSync(targetFolder)) {
-        return { success: false, error: "Dossier du profil introuvable" };
+        return { success: false, error: t("errors.profileFolderNotFound") };
     }
 
     const { owner, repo } = parseGitHubRepoUrl(repoUrl);
@@ -238,7 +239,7 @@ async function addGithubMod(profile, repoUrl, includePrereleases = false) {
     if (fs.existsSync(destinationPath)) {
         return {
             success: false,
-            error: `Un fichier du meme nom existe deja dans le profil : ${asset.name}`
+            error: t("errors.fileAlreadyInProfile", { fileName: asset.name })
         };
     }
 
@@ -329,14 +330,14 @@ async function updateGithubMod(displayedProfile, fileName) {
     const entry = findTrackedGithubEntryForDisplayedMod(displayedProfile, fileName);
 
     if (!entry) {
-        return { success: false, error: "Ce mod n'est pas suivi par GitHub" };
+        return { success: false, error: t("errors.github.notTracked") };
     }
 
     const targetProfile = entry.profile;
     const targetFolder = getModsFolder(targetProfile);
 
     if (!fs.existsSync(targetFolder)) {
-        return { success: false, error: "Dossier cible introuvable" };
+        return { success: false, error: t("errors.targetFolderNotFound") };
     }
 
     const currentFilePath = path.join(targetFolder, entry.fileName);
@@ -344,7 +345,7 @@ async function updateGithubMod(displayedProfile, fileName) {
     if (!fs.existsSync(currentFilePath)) {
         return {
             success: false,
-            error: `Le fichier local est introuvable dans le profil ${targetProfile}`
+            error: t("errors.github.localFileNotFound", { profile: targetProfile })
         };
     }
 
@@ -367,7 +368,7 @@ async function updateGithubMod(displayedProfile, fileName) {
     const index = registry.findIndex((item) => matchesEntry(item, entry.profile, entry.fileName));
 
     if (index < 0) {
-        return { success: false, error: "Entrée GitHub introuvable dans le registre" };
+        return { success: false, error: t("errors.github.entryNotFound") };
     }
 
     registry[index] = {

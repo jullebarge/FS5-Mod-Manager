@@ -10,9 +10,14 @@ const { withZip } = require('../zipReader');
 // Les icones converties (PNG du cache disque) sont servies a l'interface par ce protocole :
 // <img src="modicon://icons/<cle>.png">, sans les faire transiter en base64.
 const ICON_PROTOCOL = "modicon";
-const ICON_FILE_PATTERN = /^[0-9a-f]{32}.png$/;
+const ICON_FILE_PATTERN = /^[0-9a-f]{32}\.png$/;
 
 const conversionLocks = new Map();
+
+// Cles des icones presentes dans le cache disque : lues une fois, puis tenues a jour.
+// getMods teste chaque mod sans acces disque.
+let cachedIconKeys = null;
+let iconCacheDirReady = false;
 
 function getTexconvPath() {
     if (app.isPackaged) {
@@ -23,10 +28,27 @@ function getTexconvPath() {
 
 function getIconCacheDir() {
     const dir = path.join(app.getPath('userData'), 'icon-cache');
-    if (!fs.existsSync(dir)) {
+    if (!iconCacheDirReady) {
         fs.mkdirSync(dir, { recursive: true });
+        iconCacheDirReady = true;
     }
     return dir;
+}
+
+function getCachedIconKeys() {
+    if (!cachedIconKeys) {
+        cachedIconKeys = new Set(
+            fs.readdirSync(getIconCacheDir())
+                .filter((name) => ICON_FILE_PATTERN.test(name))
+                .map((name) => name.slice(0, 32))
+        );
+    }
+    return cachedIconKeys;
+}
+
+// Appele par le nettoyage du cache quand une icone est supprimee
+function forgetCachedIcon(iconKey) {
+    if (cachedIconKeys) cachedIconKeys.delete(iconKey);
 }
 
 // La cle d'icone derive de la cle du cache des mods : une MAJ du mod donne une nouvelle icone.
@@ -42,7 +64,7 @@ function getIconUrl(iconKey) {
 }
 
 function hasCachedIcon(iconKey) {
-    return fs.existsSync(path.join(getIconCacheDir(), `${iconKey}.png`));
+    return getCachedIconKeys().has(iconKey);
 }
 
 // A appeler avant app.whenReady : le protocole doit etre declare comme standard et securise
@@ -164,6 +186,7 @@ async function convertDdsToPngWithTexconv(ddsBuffer, iconKey) {
 
                 // copie vers le cache final (plus fiable que rename)
                 fs.copyFileSync(tempPngPath, finalPngPath);
+                getCachedIconKeys().add(iconKey);
 
                 return getIconUrl(iconKey);
             } catch (err) {
@@ -210,6 +233,12 @@ async function getModIcon(mod) {
         return getIconUrl(iconKey);
     }
 
+    // icone ajoutee au cache en dehors de l'appli : on l'adopte au lieu de la reconvertir
+    if (fs.existsSync(path.join(getIconCacheDir(), `${iconKey}.png`))) {
+        getCachedIconKeys().add(iconKey);
+        return getIconUrl(iconKey);
+    }
+
     const ddsBuffer = mod.isDirectory
         ? readDirectoryModIcon(mod.fullPath, iconFile)
         : readZipModIcon(mod.fullPath, iconFile);
@@ -221,6 +250,7 @@ async function getModIcon(mod) {
 
 module.exports = {
     getIconCacheDir,
+    forgetCachedIcon,
     registerIconScheme,
     registerIconProtocol,
     makeIconKey,

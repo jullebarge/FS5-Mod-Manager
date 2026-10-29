@@ -1,4 +1,5 @@
 const fs = require('fs');
+const { t } = require('../locales/i18n');
 
 function sameFileName(a, b) {
     return String(a || "").toLowerCase() === String(b || "").toLowerCase();
@@ -15,12 +16,12 @@ function describeFsError(err) {
         case "EBUSY":
         case "EPERM":
         case "EACCES":
-            return "fichier utilisé ou protégé";
+            return t("errors.fs.busy");
         case "EISDIR":
         case "ERR_FS_EISDIR":
-            return "un dossier porte ce nom";
+            return t("errors.fs.isDirectory");
         case "ENOENT":
-            return "fichier introuvable";
+            return t("errors.fs.notFound");
         default:
             return (err && err.message) || String(err);
     }

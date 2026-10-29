@@ -3,6 +3,7 @@ import { Modal } from "../components/Modal";
 import { ActionButton, Badge } from "../components/Controls";
 import { DEFAULT_PROFILE } from "../theme";
 import { formatSize, formatSizeStats, getStatusDisplay } from "../utils";
+import { t } from "../../locales/i18n";
 
 const AUTO_ASSOCIATION = "__auto__";
 const NO_ASSOCIATION = "__none__";
@@ -31,21 +32,21 @@ function MissingRow({ mod, onReintegrate }) {
     <div style={row}>
       <span style={{ fontWeight: 600 }}>{mod.title}</span>
       <span style={{ opacity: 0.7 }}>{mod.modName} v{mod.version}</span>
-      {mod.required && <Badge background="#8b2f2f">requis</Badge>}
+      {mod.required && <Badge background="#8b2f2f">{t("savegames.required")}</Badge>}
       {mod.hasObjects && (
-        <Badge background="#a86b2a" title="Des véhicules ou bâtiments de ce mod sont dans la partie">
-          objets dans la partie
+        <Badge background="#a86b2a" title={t("savegames.hasObjectsTooltip")}>
+          {t("savegames.hasObjects")}
         </Badge>
       )}
       <span style={{ marginLeft: "auto", opacity: 0.85 }}>
-        {availability.type === "excluded-favorite" && "Favori exclu de ce profil"}
-        {availability.type === "favorite" && "Dans les favoris : « Copier les favoris » le liera"}
-        {availability.type === "other-profile" && `Présent dans le profil ${availability.profile}`}
-        {availability.type === "none" && "Introuvable dans tes dossiers"}
+        {availability.type === "excluded-favorite" && t("savegames.availability.excludedFavorite")}
+        {availability.type === "favorite" && t("savegames.availability.favorite")}
+        {availability.type === "other-profile" && t("savegames.availability.otherProfile", { profile: availability.profile })}
+        {availability.type === "none" && t("savegames.availability.none")}
       </span>
       {availability.type === "excluded-favorite" && (
         <ActionButton style={smallButton} onClick={() => onReintegrate(mod)}>
-          Réintégrer
+          {t("savegames.reintegrate")}
         </ActionButton>
       )}
     </div>
@@ -62,25 +63,25 @@ function UnusedRow({ mod, canExclude, onExclude, onDelete }) {
       <span style={{ fontWeight: 600 }}>{mod.name}</span>
       <span style={{ opacity: 0.7 }}>{mod.fileName}</span>
       {mod.isNew && (
-        <Badge background="#355c7d" title="Ajouté après la dernière sauvegarde : la partie ne l'a pas encore proposé">
-          nouveau
+        <Badge background="#355c7d" title={t("savegames.newTooltip")}>
+          {t("savegames.new")}
         </Badge>
       )}
       {mod.usedBy.length > 0 && (
-        <Badge background="#2f6b3a" title="Activé dans une autre partie qui utilise ce profil">
-          utilisé par {mod.usedBy.join(", ")}
+        <Badge background="#2f6b3a" title={t("savegames.usedByTooltip")}>
+          {t("savegames.usedBy", { savegames: mod.usedBy.join(", ") })}
         </Badge>
       )}
       <span style={{ marginLeft: "auto", opacity: 0.7 }}>
-        {mod.isDirectory ? "Dossier" : formatSize(mod.size)}
+        {mod.isDirectory ? t("card.folder") : formatSize(mod.size)}
       </span>
       {isFavorite && canExclude ? (
         <ActionButton style={smallButton} onClick={() => onExclude([mod])}>
-          Exclure
+          {t("savegames.exclude")}
         </ActionButton>
       ) : !isFavorite ? (
         <ActionButton style={smallButton} variant="danger" onClick={() => onDelete(mod)}>
-          Corbeille
+          {t("savegames.trash")}
         </ActionButton>
       ) : null}
     </div>
@@ -148,24 +149,24 @@ export function SavegamesModal({ profile, profiles, modsVersion, onClose, onExcl
 
   return (
     <Modal
-      title={`Sauvegardes et mods du profil ${profile}`}
+      title={t("savegames.title", { profile })}
       width={900}
       scrollable
-      actions={<ActionButton onClick={onClose}>Fermer</ActionButton>}
+      actions={<ActionButton onClick={onClose}>{t("common.close")}</ActionButton>}
     >
       <div className="hint" style={{ marginBottom: "14px" }}>
-        Compare les mods activés dans une partie (careerSavegame.xml) avec le dossier de ce profil.
+        {t("savegames.intro")}
       </div>
 
       {savegames === null ? (
-        <div className="hint">Lecture des sauvegardes...</div>
+        <div className="hint">{t("savegames.loading")}</div>
       ) : savegames.length === 0 ? (
-        <div className="hint">Aucune sauvegarde trouvée dans le dossier du jeu.</div>
+        <div className="hint">{t("savegames.none")}</div>
       ) : (
         <>
           <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "flex-end" }}>
             <div style={{ flex: 2, minWidth: "320px" }}>
-              <label className="field-label">Sauvegarde analysée</label>
+              <label className="field-label">{t("savegames.selected")}</label>
               <select
                 className="text-input"
                 style={{ width: "100%" }}
@@ -173,13 +174,13 @@ export function SavegamesModal({ profile, profiles, modsVersion, onClose, onExcl
                 onChange={(e) => setSelectedId(e.target.value)}
               >
                 {linked.length > 0 && (
-                  <optgroup label={`Associées au profil ${profile}`}>
+                  <optgroup label={t("savegames.linkedGroup", { profile })}>
                     {linked.map((s) => (
                       <option key={s.id} value={s.id}>{savegameLabel(s)}</option>
                     ))}
                   </optgroup>
                 )}
-                <optgroup label="Autres sauvegardes">
+                <optgroup label={t("savegames.otherGroup")}>
                   {others.map((s) => (
                     <option key={s.id} value={s.id}>
                       {savegameLabel(s)}{s.profile ? ` → ${s.profile}` : ""}
@@ -191,7 +192,7 @@ export function SavegamesModal({ profile, profiles, modsVersion, onClose, onExcl
 
             {selected && (
               <div style={{ flex: 1, minWidth: "220px" }}>
-                <label className="field-label">Profil associé à cette sauvegarde</label>
+                <label className="field-label">{t("savegames.association")}</label>
                 <select
                   className="text-input"
                   style={{ width: "100%" }}
@@ -199,11 +200,11 @@ export function SavegamesModal({ profile, profiles, modsVersion, onClose, onExcl
                   onChange={(e) => changeAssociation(e.target.value)}
                 >
                   <option value={AUTO_ASSOCIATION}>
-                    Automatique{selected.bestMatch && selected.bestMatch.coverage >= 80
-                      ? ` (${selected.bestMatch.profile})`
-                      : " (aucun)"}
+                    {selected.bestMatch && selected.bestMatch.coverage >= 80
+                      ? t("savegames.automaticWith", { profile: selected.bestMatch.profile })
+                      : t("savegames.automaticNone")}
                   </option>
-                  <option value={NO_ASSOCIATION}>Aucun profil</option>
+                  <option value={NO_ASSOCIATION}>{t("savegames.noProfile")}</option>
                   {[DEFAULT_PROFILE, ...profiles].map((p) => (
                     <option key={p} value={p}>{p}</option>
                   ))}
@@ -214,25 +215,28 @@ export function SavegamesModal({ profile, profiles, modsVersion, onClose, onExcl
 
           {linked.length === 0 && (
             <div className="hint" style={{ marginTop: "8px" }}>
-              Aucune sauvegarde n'est associée à ce profil : choisis-en une, puis associe-la si besoin.
+              {t("savegames.noneLinked")}
             </div>
           )}
 
-          {error && <div style={{ marginTop: "16px", color: "#d9534f" }}>Erreur : {error}</div>}
+          {error && <div style={{ marginTop: "16px", color: "#d9534f" }}>{t("common.errorPrefix", { error })}</div>}
 
-          {!analysis && !error && <div className="hint" style={{ marginTop: "16px" }}>Analyse en cours...</div>}
+          {!analysis && !error && <div className="hint" style={{ marginTop: "16px" }}>{t("savegames.analyzing")}</div>}
 
           {analysis && (
             <>
               <div style={{ marginTop: "16px", fontSize: "13px", opacity: 0.85 }}>
-                {analysis.savegame.modCount} mod(s) activé(s) dans la partie · {analysis.profileModCount} dans le profil
-                {analysis.otherSavegames.length > 0 && ` · profil partagé avec : ${analysis.otherSavegames.join(", ")}`}
+                {t("savegames.summary", {
+                  active: t("savegames.count.activeInGame", { count: analysis.savegame.modCount }),
+                  inProfile: analysis.profileModCount
+                })}
+                {analysis.otherSavegames.length > 0 && ` · ${t("savegames.sharedWith", { savegames: analysis.otherSavegames.join(", ") })}`}
               </div>
 
               <h4 style={sectionTitle}>
                 {analysis.missing.length === 0
-                  ? "✅ Aucun mod manquant"
-                  : `❌ ${analysis.missing.length} mod(s) manquant(s) dans le profil`}
+                  ? `✅ ${t("savegames.noMissing")}`
+                  : `❌ ${t("savegames.missing", { count: analysis.missing.length })}`}
               </h4>
               {analysis.missing.map((m) => (
                 <MissingRow key={m.modName} mod={m} onReintegrate={onReintegrate} />
@@ -240,20 +244,20 @@ export function SavegamesModal({ profile, profiles, modsVersion, onClose, onExcl
 
               <h4 style={sectionTitle}>
                 {analysis.unused.length === 0
-                  ? "✅ Aucun mod inutilisé"
-                  : `📦 ${analysis.unused.length} mod(s) du profil non activé(s) dans la partie (${formatSizeStats(unusedSize)})`}
+                  ? `✅ ${t("savegames.noUnused")}`
+                  : `📦 ${t("savegames.unused", { count: analysis.unused.length, size: formatSizeStats(unusedSize) })}`}
               </h4>
               {analysis.unused.length > 0 && (
                 <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "6px" }}>
                   <span className="hint">
-                    Le jeu ne les charge pas pour cette partie. Les mods « nouveau » n'ont pas encore été proposés par le jeu.
+                    {t("savegames.unusedHint")}
                   </span>
                   {canExclude && removableFavorites.length > 0 && (
                     <ActionButton
                       style={{ ...smallButton, marginLeft: "auto", whiteSpace: "nowrap" }}
                       onClick={() => onExcludeFavorites(removableFavorites)}
                     >
-                      Exclure les {removableFavorites.length} favori(s) inutilisé(s)
+                      {t("savegames.excludeUnused", { count: removableFavorites.length })}
                     </ActionButton>
                   )}
                 </div>
@@ -271,13 +275,13 @@ export function SavegamesModal({ profile, profiles, modsVersion, onClose, onExcl
               {analysis.versionMismatch.length > 0 && (
                 <>
                   <h4 style={sectionTitle}>
-                    🔄 {analysis.versionMismatch.length} mod(s) dans une autre version que lors de la dernière sauvegarde
+                    🔄 {t("savegames.versionMismatch", { count: analysis.versionMismatch.length })}
                   </h4>
                   {analysis.versionMismatch.map((m) => (
                     <div key={m.fileName} style={row}>
                       <span style={{ fontWeight: 600 }}>{m.name}</span>
                       <span style={{ marginLeft: "auto", opacity: 0.85 }}>
-                        partie v{m.savedVersion} → installé v{m.installedVersion}
+                        {t("savegames.versionChange", { saved: m.savedVersion, installed: m.installedVersion })}
                       </span>
                     </div>
                   ))}

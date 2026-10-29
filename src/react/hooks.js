@@ -54,9 +54,10 @@ export function useGameRunning() {
   return gameRunning;
 }
 
-// Mods du profil affiche, favoris de Default, exclusions et icones.
+// Mods du profil affiche, favoris de Default (seulement si needDefaultMods : filtre "Exclus"),
+// exclusions et icones.
 // Chaque chargement a un numero : les reponses d'un chargement depasse sont ignorees.
-export function useProfileData(profile, enabled, reloadToken) {
+export function useProfileData(profile, enabled, reloadToken, needDefaultMods) {
   const [mods, setMods] = useState([]);
   const [defaultMods, setDefaultMods] = useState([]);
   const [excludedMods, setExcludedMods] = useState([]);
@@ -66,6 +67,15 @@ export function useProfileData(profile, enabled, reloadToken) {
   const requestIdRef = useRef(0);
   // iconKey deja demandes (ou en cours) : evite les doublons entre profil et Default
   const iconRequestsRef = useRef(new Set());
+  const needDefaultModsRef = useRef(needDefaultMods);
+  needDefaultModsRef.current = needDefaultMods;
+
+  // Les favoris de Default ne servent qu'au filtre "Exclus" : inutile de les relire a chaque changement de profil
+  function fetchDefaultMods() {
+    return needDefaultModsRef.current && profile !== DEFAULT_PROFILE
+      ? window.fs25.getMods(DEFAULT_PROFILE)
+      : Promise.resolve([]);
+  }
 
   // Icones : celles deja converties arrivent avec la liste (iconUrl), les autres sont
   // converties a la demande, ICON_LOAD_CONCURRENCY a la fois
@@ -124,7 +134,7 @@ export function useProfileData(profile, enabled, reloadToken) {
     const [list, excluded, defaultList] = await Promise.all([
       window.fs25.getMods(profile),
       window.fs25.getExcludedMods(profile),
-      profile !== DEFAULT_PROFILE ? window.fs25.getMods(DEFAULT_PROFILE) : Promise.resolve([])
+      fetchDefaultMods()
     ]);
 
     if (requestId !== requestIdRef.current) return;
@@ -155,6 +165,16 @@ export function useProfileData(profile, enabled, reloadToken) {
     if (!enabled) return;
     reload();
   }, [profile, enabled, reloadToken]);
+
+  // ouverture du filtre "Exclus" : chargement des favoris de Default a ce moment-la
+  useEffect(() => {
+    if (!enabled || !needDefaultMods || profile === DEFAULT_PROFILE) return;
+
+    const requestId = requestIdRef.current;
+    window.fs25.getMods(DEFAULT_PROFILE).then((list) => {
+      if (requestId === requestIdRef.current) setDefaultMods(list);
+    });
+  }, [needDefaultMods, profile, enabled]);
 
   const refreshInPlace = () => reload({ silent: true });
 

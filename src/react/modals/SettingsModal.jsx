@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Modal } from "../components/Modal";
 import { ActionButton } from "../components/Controls";
 import { formatSizeStats } from "../utils";
+import { LANGUAGES, t } from "../../locales/i18n";
 
 // Taille du cache d'icones et nettoyage des icones de mods qui n'existent plus
 function IconCacheSection() {
@@ -12,7 +13,7 @@ function IconCacheSection() {
   async function loadStats() {
     const result = await window.fs25.getIconCacheStats();
     setStats(result.success ? result : null);
-    if (!result.success) setMessage(`Erreur : ${result.error}`);
+    if (!result.success) setMessage(t("common.errorPrefix", { error: result.error }));
   }
 
   useEffect(() => {
@@ -24,35 +25,40 @@ function IconCacheSection() {
     const result = await window.fs25.cleanIconCache();
     setCleaning(false);
     setMessage(result.success
-      ? `${result.removedCount} icône(s) supprimée(s), ${formatSizeStats(result.removedBytes)} libérés`
-      : `Erreur : ${result.error}`);
+      ? t("settings.iconCache.cleaned", { count: result.removedCount, size: formatSizeStats(result.removedBytes) })
+      : t("common.errorPrefix", { error: result.error }));
     await loadStats();
   }
 
   return (
     <>
-      <label className="field-label">Cache des icônes</label>
+      <label className="field-label">{t("settings.iconCache.label")}</label>
       <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "6px", fontSize: "13px" }}>
         <span style={{ flex: 1, opacity: 0.85 }}>
           {stats
-            ? `${stats.fileCount} icône(s), ${formatSizeStats(stats.totalBytes)} — dont ${stats.unusedCount} inutilisée(s) (${formatSizeStats(stats.unusedBytes)})`
-            : "Calcul en cours..."}
+            ? t("settings.iconCache.stats", {
+                files: t("settings.iconCache.count.files", { count: stats.fileCount }),
+                size: formatSizeStats(stats.totalBytes),
+                unused: t("settings.iconCache.count.unused", { count: stats.unusedCount }),
+                unusedSize: formatSizeStats(stats.unusedBytes)
+              })
+            : t("settings.iconCache.computing")}
         </span>
         <ActionButton
           onClick={clean}
           disabled={!stats || stats.unusedCount === 0 || cleaning}
         >
-          {cleaning ? "Nettoyage..." : "Nettoyer maintenant"}
+          {cleaning ? t("settings.iconCache.cleaning") : t("settings.iconCache.clean")}
         </ActionButton>
       </div>
       <div className="hint" style={{ marginBottom: "16px" }}>
-        {message || "Icônes de mods supprimés ou mis à jour. Le nettoyage se fait aussi automatiquement au démarrage (icônes inutilisées depuis plus de 2 jours)."}
+        {message || t("settings.iconCache.hint")}
       </div>
     </>
   );
 }
 
-// Champ "dossier" : saisie libre ou bouton Parcourir. defaultHint : dossier utilise si vide
+// Champ "dossier" : saisie libre ou bouton Parcourir
 function FolderField({ label, value, placeholder, hint, onChange, onBrowse }) {
   return (
     <>
@@ -66,7 +72,7 @@ function FolderField({ label, value, placeholder, hint, onChange, onBrowse }) {
           onChange={(e) => onChange(e.target.value)}
           style={{ flex: 1 }}
         />
-        <ActionButton onClick={onBrowse}>Parcourir</ActionButton>
+        <ActionButton onClick={onBrowse}>{t("settings.browse")}</ActionButton>
       </div>
       <div className="hint" style={{ marginBottom: "16px" }}>{hint}</div>
     </>
@@ -76,6 +82,7 @@ function FolderField({ label, value, placeholder, hint, onChange, onBrowse }) {
 // onPickFolder(titre, dossierInitial) renvoie le dossier choisi, ou null si annule
 export function SettingsModal({ settings, onCancel, onPickFolder, onSave }) {
   const [form, setForm] = useState({
+    language: settings?.language || "en",
     gamePath: settings?.gamePath || "",
     modsPath: settings?.modsPath || "",
     profilesPath: settings?.profilesPath || "",
@@ -94,61 +101,72 @@ export function SettingsModal({ settings, onCancel, onPickFolder, onSave }) {
   }
 
   // dossiers utilises quand les champs sont vides, deduits du dossier du jeu saisi
+  // (le nom du dossier des mods par carte depend de la langue, sauf s'il existe deja)
   const gameFolder = form.gamePath.replace(/[\\/]+$/, "");
   const defaultModsPath = `${gameFolder}\\mods`;
-  const defaultProfilesPath = `${gameFolder}\\modsCartes`;
+  const defaultProfilesPath = `${gameFolder}\\${settings?.profilesFolderName || "modsCartes"}`;
 
   return (
     <Modal
-      title="Réglages"
+      title={t("settings.title")}
       width={600}
       scrollable
       actions={
         <>
-          <ActionButton onClick={onCancel}>Annuler</ActionButton>
-          <ActionButton onClick={() => onSave(form)}>Enregistrer</ActionButton>
+          <ActionButton onClick={onCancel}>{t("common.cancel")}</ActionButton>
+          <ActionButton onClick={() => onSave(form)}>{t("common.save")}</ActionButton>
         </>
       }
     >
+      <label className="field-label">{t("settings.language")}</label>
+      <select
+        className="text-input"
+        value={form.language}
+        onChange={(e) => setField("language", e.target.value)}
+        style={{ width: "100%", marginBottom: "16px" }}
+      >
+        {LANGUAGES.map((language) => (
+          <option key={language.code} value={language.code}>{language.label}</option>
+        ))}
+      </select>
+
       <FolderField
-        label="Dossier du jeu (contient gameSettings.xml et les sauvegardes)"
+        label={t("settings.gamePath.label")}
         value={form.gamePath}
-        hint={`Par défaut : ${settings?.defaultGamePath}`}
+        hint={t("settings.defaultValue", { value: settings?.defaultGamePath })}
         onChange={(value) => setField("gamePath", value)}
-        onBrowse={() => browse("gamePath", "Choisir le dossier FarmingSimulator2025", form.gamePath)}
+        onBrowse={() => browse("gamePath", t("settings.gamePath.pick"), form.gamePath)}
       />
 
       <FolderField
-        label="Dossier des mods favoris (profil Default)"
+        label={t("settings.modsPath.label")}
         value={form.modsPath}
         placeholder={defaultModsPath}
-        hint="Laisser vide pour utiliser le dossier « mods » du jeu."
+        hint={t("settings.modsPath.hint")}
         onChange={(value) => setField("modsPath", value)}
-        onBrowse={() => browse("modsPath", "Choisir le dossier des mods favoris", form.modsPath || defaultModsPath)}
+        onBrowse={() => browse("modsPath", t("settings.modsPath.pick"), form.modsPath || defaultModsPath)}
       />
 
       <FolderField
-        label="Dossier des mods par carte (un sous-dossier par profil)"
+        label={t("settings.profilesPath.label")}
         value={form.profilesPath}
         placeholder={defaultProfilesPath}
-        hint="Laisser vide pour utiliser le dossier « modsCartes » du jeu. Il doit être sur le même disque que les mods favoris (liens des favoris)."
+        hint={t("settings.profilesPath.hint", { folder: settings?.profilesFolderName || "modsCartes" })}
         onChange={(value) => setField("profilesPath", value)}
-        onBrowse={() => browse("profilesPath", "Choisir le dossier des mods par carte", form.profilesPath || defaultProfilesPath)}
+        onBrowse={() => browse("profilesPath", t("settings.profilesPath.pick"), form.profilesPath || defaultProfilesPath)}
       />
 
-      <label className="field-label">
-        URL de lancement du jeu (bouton « Lancer le jeu »)
-      </label>
+      <label className="field-label">{t("settings.launchUrl.label")}</label>
       <input
         type="text"
         className="text-input"
         value={form.launchUrl}
         onChange={(e) => setField("launchUrl", e.target.value)}
-        placeholder="playnite://playnite/start/<id> ou steam://rungameid/<id>"
+        placeholder={t("settings.launchUrl.placeholder")}
         style={{ width: "100%", marginBottom: "6px" }}
       />
       <div className="hint" style={{ marginBottom: "16px" }}>
-        Laisser vide pour désactiver le bouton.
+        {t("settings.launchUrl.hint")}
       </div>
 
       <IconCacheSection />

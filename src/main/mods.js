@@ -12,6 +12,8 @@ const { githubRegistry, externalRegistry, matchesEntry } = require('./registry')
 const { buildGithubMeta } = require('./github');
 const { getFavoriteSyncState, removeFavoriteFromProfiles } = require('./links');
 const { getModNameFromFile, getProfileModNames, findAvailability } = require('./modLocator');
+const { t, getLanguage } = require('../locales/i18n');
+const { pickModTitle } = require('../utils');
 
 function buildExternalMeta(entry) {
     if (!entry) return null;
@@ -96,7 +98,8 @@ function getMods(profile) {
 
         return {
             fileName: file,
-            name: modInfo.name,
+            // titre dans la langue de l'interface (anglais a defaut)
+            name: pickModTitle(modInfo.titles, getLanguage(), modInfo.name),
             version: modInfo.version,
             author: modInfo.author,
             iconFilename,
@@ -128,21 +131,21 @@ function getExcludedMods(profile) {
 
 async function copyLocalZipToProfile(sourceZipPath, destinationPath) {
     if (!fs.existsSync(sourceZipPath)) {
-        throw new Error("Le fichier ZIP sélectionné est introuvable");
+        throw new Error(t("errors.external.zipNotFound"));
     }
 
     if (!sourceZipPath.toLowerCase().endsWith(".zip")) {
-        throw new Error("Le fichier sélectionné doit être un ZIP");
+        throw new Error(t("errors.external.notZip"));
     }
 
     const hasModDesc = withZip(sourceZipPath, (zip) => !!zip.getEntry("modDesc.xml"));
 
     if (!hasModDesc) {
-        throw new Error("Le ZIP sélectionné ne semble pas être un mod FS valide");
+        throw new Error(t("errors.external.notAMod"));
     }
 
     if (fs.existsSync(destinationPath)) {
-        throw new Error(`Un fichier du meme nom existe deja dans le profil : ${path.basename(destinationPath)}`);
+        throw new Error(t("errors.fileAlreadyInProfile", { fileName: path.basename(destinationPath) }));
     }
 
     await fs.promises.copyFile(sourceZipPath, destinationPath, fs.constants.COPYFILE_EXCL);
@@ -154,21 +157,21 @@ async function addExternalMod(profile, zipPath, url) {
     const pageUrl = String(url || "").trim();
 
     if (!targetProfile) {
-        return { success: false, error: "Profil invalide" };
+        return { success: false, error: t("errors.invalidProfile") };
     }
 
     if (!sourceZipPath) {
-        return { success: false, error: "Aucun ZIP sélectionné" };
+        return { success: false, error: t("errors.external.noZipSelected") };
     }
 
     if (!pageUrl) {
-        return { success: false, error: "Merci de saisir une URL" };
+        return { success: false, error: t("errors.external.urlRequired") };
     }
 
     const targetFolder = getModsFolder(targetProfile);
 
     if (!fs.existsSync(targetFolder)) {
-        return { success: false, error: "Dossier du profil introuvable" };
+        return { success: false, error: t("errors.profileFolderNotFound") };
     }
 
     const fileName = path.basename(sourceZipPath);
@@ -233,12 +236,12 @@ function copyTrackingEntries(sourceProfile, targetProfile, fileName) {
 // (envoyee a la corbeille).
 async function copyModToProfiles(sourceProfile, fileName, targetProfiles, options = {}) {
     if (!sourceProfile || sourceProfile === DEFAULT_PROFILE) {
-        return { success: false, error: "Pour partager un mod de Default, utilise les favoris" };
+        return { success: false, error: t("errors.copy.fromDefault") };
     }
 
     const sourcePath = path.join(getModsFolder(sourceProfile), fileName);
     if (!fs.existsSync(sourcePath)) {
-        return { success: false, error: "Mod introuvable dans le profil" };
+        return { success: false, error: t("errors.modNotInProfile") };
     }
 
     const isDirectory = fs.statSync(sourcePath).isDirectory();
@@ -247,7 +250,7 @@ async function copyModToProfiles(sourceProfile, fileName, targetProfiles, option
 
     for (const targetProfile of targetProfiles || []) {
         if (targetProfile === sourceProfile || !knownProfiles.includes(targetProfile)) {
-            result.errors.push(`${targetProfile} : profil invalide`);
+            result.errors.push(`${targetProfile} : ${t("errors.copy.invalidTarget")}`);
             continue;
         }
 
@@ -261,7 +264,7 @@ async function copyModToProfiles(sourceProfile, fileName, targetProfiles, option
                     continue;
                 }
                 if (!options.replaceExisting) {
-                    result.errors.push(`${targetProfile} : une autre version est déjà présente`);
+                    result.errors.push(`${targetProfile} : ${t("errors.copy.otherVersionPresent")}`);
                     continue;
                 }
 
@@ -290,7 +293,7 @@ async function deleteMod(profile, fileName, options = {}) {
     const filePath = path.join(getModsFolder(profile), fileName);
 
     if (!fs.existsSync(filePath)) {
-        return { success: false, error: "Fichier introuvable" };
+        return { success: false, error: t("errors.fileNotFound") };
     }
 
     // corbeille Windows plutot que suppression definitive (fichiers et mods dossiers)

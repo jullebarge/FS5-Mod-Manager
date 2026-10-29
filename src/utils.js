@@ -33,6 +33,43 @@ function parseIconFilename(xml) {
     return match ? match[1] : null;
 }
 
+function cleanXmlText(text) {
+    return text
+        .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&amp;/g, "&")
+        .trim();
+}
+
+// Titres du mod par langue : <title><en>..</en><fr>..</fr></title> -> { en, fr },
+// ou { default } pour un titre sans langue
+function parseModTitles(xml) {
+    const block = xml.match(/<title>([\s\S]*?)<\/title>/);
+    if (!block) return {};
+
+    const titles = {};
+    for (const match of block[1].matchAll(/<([a-z]{2,3})>([\s\S]*?)<\/\1>/g)) {
+        const title = cleanXmlText(match[2]);
+        if (title) titles[match[1]] = title;
+    }
+
+    if (Object.keys(titles).length === 0) {
+        const title = cleanXmlText(block[1]);
+        if (title) titles.default = title;
+    }
+
+    return titles;
+}
+
+// Titre dans la langue demandee, sinon anglais, sinon titre sans langue, sinon le premier trouve
+function pickModTitle(titles, language, fallback) {
+    if (!titles) return fallback;
+    return titles[language] || titles.en || titles.default || Object.values(titles)[0] || fallback;
+}
+
 function parseModTitle(xml, fileName) {
     let name = fileName;
 
@@ -89,6 +126,7 @@ function parseModDesc(zip, modFilePath) {
 
     return {
         name: parseModTitle(xml, modFilePath),
+        titles: parseModTitles(xml),
         version: parseModVersion(xml),
         author: parseModAuthor(xml),
         iconFilename: parseIconFilename(xml),
@@ -104,6 +142,7 @@ function getModInfo(zip, fileName) {
     }
     return {
         name: parsed.name,
+        titles: parsed.titles,
         version: parsed.version,
         author: parsed.author,
         iconFilename: parsed.iconFilename,
@@ -121,6 +160,7 @@ function parseModDescFromDirectory(dirPath, dirName) {
         const xml = fs.readFileSync(modDescPath, 'utf-8');
         return {
             name: parseModTitle(xml, dirName),
+            titles: parseModTitles(xml),
             version: parseModVersion(xml),
             author: parseModAuthor(xml),
             iconFilename: parseIconFilename(xml),
@@ -138,6 +178,7 @@ function getModInfoFromDirectory(dirPath, dirName) {
     }
     return {
         name: parsed.name,
+        titles: parsed.titles,
         version: parsed.version,
         author: parsed.author,
         iconFilename: parsed.iconFilename,
@@ -151,6 +192,8 @@ module.exports = {
     ensureDir,
     parseIconFilename,
     parseModTitle,
+    parseModTitles,
+    pickModTitle,
     parseModVersion,
     parseModAuthor,
     parseModDependencies,

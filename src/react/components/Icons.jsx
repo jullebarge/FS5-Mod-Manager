@@ -1,4 +1,5 @@
 import React from "react";
+import { t } from "../../locales/i18n";
 
 export function Spinner({ size = 40 }) {
   return (
@@ -6,7 +7,7 @@ export function Spinner({ size = 40 }) {
       width={size}
       height={size}
       viewBox="0 0 50 50"
-      aria-label="Chargement"
+      aria-label={t("common.loading")}
       role="img"
     >
       <circle
