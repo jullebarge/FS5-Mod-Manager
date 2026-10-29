@@ -7,7 +7,7 @@ const { DEFAULT_PROFILE, getModsFolder } = require('./settings');
 const { includesFileName, describeFsError, haveSameContent } = require('./fsUtils');
 const { listProfiles, readManagedLinks, readExcludedModsFromProfile } = require('./profiles');
 const { getModCacheKey, readModInfo, readZipModVersion } = require('./modInfo');
-const { makeIconKey } = require('./icons');
+const { makeIconKey, getIconUrl, hasCachedIcon } = require('./icons');
 const { githubRegistry, externalRegistry, matchesEntry } = require('./registry');
 const { buildGithubMeta } = require('./github');
 const { getFavoriteSyncState, removeFavoriteFromProfiles } = require('./links');
@@ -69,6 +69,7 @@ function getMods(profile) {
         const cacheKey = getModCacheKey(file, versionKey);
         const modInfo = readModInfo(file, fullPath, isDirectory, cacheKey);
         const iconFilename = modInfo.iconFilename || null;
+        const iconKey = iconFilename ? makeIconKey(cacheKey, iconFilename) : null;
 
         const isManagedCommon = !isDefault && includesFileName(managedLinks, file);
         const isExcluded = !isDefault && includesFileName(excludedMods, file);
@@ -85,7 +86,9 @@ function getMods(profile) {
             version: modInfo.version,
             author: modInfo.author,
             iconFilename,
-            iconKey: iconFilename ? makeIconKey(cacheKey, iconFilename) : null,
+            iconKey,
+            // icone deja convertie : l'interface l'affiche directement, sans appel a getModIcon
+            iconUrl: iconKey && hasCachedIcon(iconKey) ? getIconUrl(iconKey) : null,
             size: isDirectory ? 0 : stats.size,
             isSymlink: isManagedCommon,
             isDirectory,
@@ -108,7 +111,7 @@ function getExcludedMods(profile) {
     return readExcludedModsFromProfile(profile);
 }
 
-function copyLocalZipToProfile(sourceZipPath, destinationPath) {
+async function copyLocalZipToProfile(sourceZipPath, destinationPath) {
     if (!fs.existsSync(sourceZipPath)) {
         throw new Error("Le fichier ZIP sélectionné est introuvable");
     }
@@ -127,10 +130,10 @@ function copyLocalZipToProfile(sourceZipPath, destinationPath) {
         throw new Error(`Un fichier du meme nom existe deja dans le profil : ${path.basename(destinationPath)}`);
     }
 
-    fs.copyFileSync(sourceZipPath, destinationPath);
+    await fs.promises.copyFile(sourceZipPath, destinationPath, fs.constants.COPYFILE_EXCL);
 }
 
-function addExternalMod(profile, zipPath, url) {
+async function addExternalMod(profile, zipPath, url) {
     const targetProfile = String(profile || "").trim();
     const sourceZipPath = String(zipPath || "").trim();
     const pageUrl = String(url || "").trim();
@@ -155,7 +158,7 @@ function addExternalMod(profile, zipPath, url) {
 
     const fileName = path.basename(sourceZipPath);
 
-    copyLocalZipToProfile(sourceZipPath, path.join(targetFolder, fileName));
+    await copyLocalZipToProfile(sourceZipPath, path.join(targetFolder, fileName));
 
     externalRegistry.upsert({
         profile: targetProfile,
@@ -252,9 +255,10 @@ async function copyModToProfiles(sourceProfile, fileName, targetProfiles, option
             }
 
             if (isDirectory) {
-                fs.cpSync(sourcePath, targetPath, { recursive: true, errorOnExist: true, force: false });
+                await fs.promises.cp(sourcePath, targetPath, { recursive: true, errorOnExist: true, force: false });
             } else {
-                fs.copyFileSync(sourcePath, targetPath, fs.constants.COPYFILE_EXCL);
+                // copie asynchrone : un gros mod ne bloque pas le reste de l'application
+                await fs.promises.copyFile(sourcePath, targetPath, fs.constants.COPYFILE_EXCL);
             }
 
             copyTrackingEntries(sourceProfile, targetProfile, fileName);

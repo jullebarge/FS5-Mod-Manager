@@ -3,6 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const { registerIpcHandlers } = require('./main/ipc');
 const { flushModInfoCache } = require('./main/modInfo');
+const { registerIconScheme, registerIconProtocol } = require('./main/icons');
+
+registerIconScheme();
 
 function getIconPath() {
     if (!app.isPackaged) {
@@ -29,6 +32,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+    registerIconProtocol();
     registerIpcHandlers();
     createWindow();
 

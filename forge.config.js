@@ -24,6 +24,11 @@ module.exports = {
     {
       name: '@electron-forge/plugin-webpack',
       config: {
+        // politique par defaut de Forge + images servies par le protocole modicon:// (icones des mods)
+        devContentSecurityPolicy:
+          "default-src 'self' 'unsafe-inline' data:; " +
+          "script-src 'self' 'unsafe-eval' 'unsafe-inline' data:; " +
+          "img-src 'self' data: modicon:",
         mainConfig: './webpack.main.config.js',
         renderer: {
           config: './webpack.renderer.config.js',

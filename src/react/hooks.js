@@ -67,13 +67,25 @@ export function useProfileData(profile, enabled, reloadToken) {
   // iconKey deja demandes (ou en cours) : evite les doublons entre profil et Default
   const iconRequestsRef = useRef(new Set());
 
+  // Icones : celles deja converties arrivent avec la liste (iconUrl), les autres sont
+  // converties a la demande, ICON_LOAD_CONCURRENCY a la fois
   async function loadIcons(modsList, requestId = requestIdRef.current) {
     const pending = new Map();
+    const ready = {};
 
     for (const mod of modsList) {
-      if (mod.iconKey && !iconRequestsRef.current.has(mod.iconKey) && !pending.has(mod.iconKey)) {
+      if (!mod.iconKey || iconRequestsRef.current.has(mod.iconKey) || pending.has(mod.iconKey)) continue;
+
+      if (mod.iconUrl) {
+        ready[mod.iconKey] = mod.iconUrl;
+        iconRequestsRef.current.add(mod.iconKey);
+      } else {
         pending.set(mod.iconKey, mod);
       }
+    }
+
+    if (Object.keys(ready).length > 0) {
+      setIcons((prev) => ({ ...prev, ...ready }));
     }
 
     const queue = [...pending.values()];
@@ -125,10 +137,11 @@ export function useProfileData(profile, enabled, reloadToken) {
     await loadIcons(list, requestId);
   }
 
-  // Recharge le profil (apres une action, ou sur demande)
-  function reload() {
+  // Recharge le profil. silent : la grille reste affichee pendant le rechargement
+  // (apres une action), sinon un indicateur de chargement la remplace
+  function reload({ silent = false } = {}) {
     const requestId = ++requestIdRef.current;
-    setLoadingMods(true);
+    if (!silent) setLoadingMods(true);
 
     return refresh(requestId).catch((err) => {
       if (requestId === requestIdRef.current) {
@@ -143,5 +156,7 @@ export function useProfileData(profile, enabled, reloadToken) {
     reload();
   }, [profile, enabled, reloadToken]);
 
-  return { mods, defaultMods, excludedMods, loadingMods, icons, reload, loadIcons };
+  const refreshInPlace = () => reload({ silent: true });
+
+  return { mods, defaultMods, excludedMods, loadingMods, icons, reload, refreshInPlace, loadIcons };
 }

@@ -1,14 +1,18 @@
-const { app } = require('electron');
+const { app, protocol, net } = require('electron');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { withZip } = require('../zipReader');
 
+// Les icones converties (PNG du cache disque) sont servies a l'interface par ce protocole :
+// <img src="modicon://icons/<cle>.png">, sans les faire transiter en base64.
+const ICON_PROTOCOL = "modicon";
+const ICON_FILE_PATTERN = /^[0-9a-f]{32}.png$/;
+
 const conversionLocks = new Map();
-const iconCache = new Map();
-const ICON_CACHE_TTL = 30 * 60 * 1000;
 
 function getTexconvPath() {
     if (app.isPackaged) {
@@ -33,18 +37,31 @@ function makeIconKey(modCacheKey, iconFilename) {
         .digest('hex');
 }
 
-function toPngDataUrl(buffer) {
-    return `data:image/png;base64,${buffer.toString('base64')}`;
+function getIconUrl(iconKey) {
+    return `${ICON_PROTOCOL}://icons/${iconKey}.png`;
 }
 
-function readCachedIconFile(iconKey) {
-    const pngPath = path.join(getIconCacheDir(), `${iconKey}.png`);
+function hasCachedIcon(iconKey) {
+    return fs.existsSync(path.join(getIconCacheDir(), `${iconKey}.png`));
+}
 
-    try {
-        return toPngDataUrl(fs.readFileSync(pngPath));
-    } catch {
-        return null;
-    }
+// A appeler avant app.whenReady : le protocole doit etre declare comme standard et securise
+function registerIconScheme() {
+    protocol.registerSchemesAsPrivileged([
+        { scheme: ICON_PROTOCOL, privileges: { standard: true, secure: true } }
+    ]);
+}
+
+function registerIconProtocol() {
+    protocol.handle(ICON_PROTOCOL, (request) => {
+        const fileName = path.basename(new URL(request.url).pathname);
+
+        if (!ICON_FILE_PATTERN.test(fileName)) {
+            return new Response(null, { status: 404 });
+        }
+
+        return net.fetch(pathToFileURL(path.join(getIconCacheDir(), fileName)).toString());
+    });
 }
 
 function readZipModIcon(fullPath, iconFile) {
@@ -148,7 +165,7 @@ async function convertDdsToPngWithTexconv(ddsBuffer, iconKey) {
                 // copie vers le cache final (plus fiable que rename)
                 fs.copyFileSync(tempPngPath, finalPngPath);
 
-                return toPngDataUrl(fs.readFileSync(finalPngPath));
+                return getIconUrl(iconKey);
             } catch (err) {
                 console.error("Erreur conversion texconv :", err);
                 return null;
@@ -188,32 +205,25 @@ async function getModIcon(mod) {
         return null;
     }
 
-    const cached = iconCache.get(iconKey);
-    if (cached && Date.now() - cached.cachedAt < ICON_CACHE_TTL) {
-        return cached.data;
-    }
-
     // Cache disque d'abord : on n'ouvre le mod que si l'icone n'a jamais ete convertie
-    let result = readCachedIconFile(iconKey);
-
-    if (!result) {
-        const ddsBuffer = mod.isDirectory
-            ? readDirectoryModIcon(mod.fullPath, iconFile)
-            : readZipModIcon(mod.fullPath, iconFile);
-
-        if (!ddsBuffer) return null;
-
-        result = await convertDdsToPngWithTexconv(ddsBuffer, iconKey);
+    if (hasCachedIcon(iconKey)) {
+        return getIconUrl(iconKey);
     }
 
-    if (result) {
-        iconCache.set(iconKey, { data: result, cachedAt: Date.now() });
-    }
+    const ddsBuffer = mod.isDirectory
+        ? readDirectoryModIcon(mod.fullPath, iconFile)
+        : readZipModIcon(mod.fullPath, iconFile);
 
-    return result;
+    if (!ddsBuffer) return null;
+
+    return await convertDdsToPngWithTexconv(ddsBuffer, iconKey);
 }
 
 module.exports = {
+    registerIconScheme,
+    registerIconProtocol,
     makeIconKey,
+    getIconUrl,
+    hasCachedIcon,
     getModIcon
 };

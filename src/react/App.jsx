@@ -79,7 +79,7 @@ export default function App() {
 
   const { toasts, showToast, showErrorList } = useToasts();
   const gameRunning = useGameRunning();
-  const { mods, defaultMods, excludedMods, loadingMods, icons, reload, loadIcons } =
+  const { mods, defaultMods, excludedMods, loadingMods, icons, reload, refreshInPlace, loadIcons } =
     useProfileData(selectedProfile, isInitialized, reloadToken);
 
   async function loadProfilesAndSettings() {
@@ -186,7 +186,7 @@ export default function App() {
     );
 
     setFilter("all");
-    await reload();
+    await refreshInPlace();
   }
 
   async function handleRemoveLinks() {
@@ -204,7 +204,7 @@ export default function App() {
     );
 
     setFilter("all");
-    await reload();
+    await refreshInPlace();
   }
 
   async function handleOpenProfileFolder() {
@@ -230,7 +230,7 @@ export default function App() {
         : `${mod.name} réintégré dans le profil`
     );
 
-    await reload();
+    await refreshInPlace();
   }
 
   async function handleCopyMod(mod, targetProfiles, options) {
@@ -256,7 +256,7 @@ export default function App() {
 
     showToast(`${result.excludedCount} favori(s) exclu(s) du profil`, "success");
     showErrorList("Favoris non exclus", result.errors);
-    await reload();
+    await refreshInPlace();
   }
 
   async function handleReintegrateMissing(missingMod) {
@@ -274,7 +274,7 @@ export default function App() {
     if (!checkResult(result)) return;
 
     showToast(`${mod.name} ajouté aux mods favoris`, "success");
-    await reload();
+    await refreshInPlace();
   }
 
   async function handleDeleteMod(mod, options) {
@@ -293,7 +293,7 @@ export default function App() {
     }
     showErrorList("Non retiré de certains profils", result.profileErrors);
 
-    await reload();
+    await refreshInPlace();
   }
 
   async function handlePromoteProfileVersion(mod) {
@@ -306,7 +306,7 @@ export default function App() {
     );
     showErrorList("Liens non mis à jour", result.errors);
 
-    await reload();
+    await refreshInPlace();
   }
 
   async function handleRelinkFavorite(mod) {
@@ -314,7 +314,7 @@ export default function App() {
     if (!checkResult(result)) return;
 
     showToast(`${mod.name} : version des favoris reprise (v${mod.defaultVersion || "?"})`, "success");
-    await reload();
+    await refreshInPlace();
   }
 
   async function handlePickGameFolder() {
@@ -369,7 +369,7 @@ export default function App() {
 
     showToast(`${result.fileName} téléchargé depuis ${result.repo}`);
     setOpenModal(null);
-    await reload();
+    await refreshInPlace();
   }
 
   async function handleCheckGithubUpdates() {
@@ -388,7 +388,7 @@ export default function App() {
       showToast(`Aucune mise à jour trouvée sur ${result.checkedCount} mod(s)`);
     }
 
-    await reload();
+    await refreshInPlace();
   }
 
   async function handleOpenGithubRepo(mod) {
@@ -414,7 +414,7 @@ export default function App() {
       showToast(`${mod.name} mis à jour`, "success");
     }
 
-    await reload();
+    await refreshInPlace();
   }
 
   async function handleLaunchGame() {
@@ -453,7 +453,7 @@ export default function App() {
 
     showToast(`${result.fileName} ajouté comme mod externe`, "success");
     setOpenModal(null);
-    await reload();
+    await refreshInPlace();
   }
 
   async function handleOpenExternalUrl(url) {
