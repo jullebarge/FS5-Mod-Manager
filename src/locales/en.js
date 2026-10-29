@@ -141,6 +141,8 @@ module.exports = {
         duplicateCopyTooltip: "Same file as the favorite, but copied instead of linked: “Copy favorites to profile” replaces it with a link and frees the space",
         favoriteVersionTooltip: "Favorite version: v{version}",
         newerThanFavorite: "Newer than favorite",
+        shared: "Shared ×{count}",
+        sharedTooltip: "Also in: {profiles}. If you use it everywhere, “Make favorite” keeps a single copy, linked into each profile.",
         outOfSync: "Out of sync"
     },
 

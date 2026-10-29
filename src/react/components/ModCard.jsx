@@ -112,6 +112,15 @@ export const ModCard = memo(function ModCard({
             </Badge>
           )}
 
+          {mod.sharedWith?.length > 0 && (
+            <Badge
+              background="#2e6f73"
+              title={t("card.sharedTooltip", { profiles: mod.sharedWith.join(", ") })}
+            >
+              {t("card.shared", { count: mod.sharedWith.length + 1 })}
+            </Badge>
+          )}
+
           {mod.missingDependencies?.length > 0 && (
             <Badge
               background="#8b2f2f"

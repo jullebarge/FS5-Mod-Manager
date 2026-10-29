@@ -70,11 +70,17 @@ function getMods(profile) {
     const modFiles = listModFiles(folder);
     const presentModNames = new Set(modFiles.map((m) => getModNameFromFile(m.file).toLowerCase()));
 
-    // contenu des autres dossiers, lu seulement si une dependance manque
-    let profileModNames = null;
+    // contenu de Default et de tous les profils (noms des mods) : dependances et mods partages
+    const profileModNames = getProfileModNames();
     function locateDependency(modName) {
-        profileModNames = profileModNames || getProfileModNames();
         return { modName, availability: findAvailability(modName, profile, excludedMods, profileModNames) };
+    }
+
+    // Autres profils (hors Default) qui ont un mod du meme nom, quelle que soit sa version
+    function findSharingProfiles(file) {
+        const lower = getModNameFromFile(file).toLowerCase();
+        return Object.keys(profileModNames)
+            .filter((name) => name !== DEFAULT_PROFILE && name !== profile && profileModNames[name].has(lower));
     }
 
     return modFiles.map(({ file, fullPath, stats, isDirectory, versionKey }) => {
@@ -90,6 +96,11 @@ function getMods(profile) {
         const missingDependencies = (modInfo.dependencies || [])
             .filter((dependency) => !presentModNames.has(dependency.toLowerCase()))
             .map(locateDependency);
+
+        // mod local present dans d'autres profils : candidat pour devenir un favori
+        const sharedWith = !isDefault && (status === "local" || status === "directory")
+            ? findSharingProfiles(file)
+            : [];
 
         let syncState = { outOfSync: false, isDuplicateCopy: false, direction: null, defaultVersion: null };
         if (isManagedCommon && !isDirectory) {
@@ -114,6 +125,7 @@ function getMods(profile) {
             syncDirection: syncState.direction,
             defaultVersion: syncState.defaultVersion,
             missingDependencies,
+            sharedWith,
             status,
             fullPath,
             github: buildGithubMeta(githubRegistry.findForDisplayedMod(githubEntries, profile, file, status)),

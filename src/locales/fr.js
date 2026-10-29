@@ -141,6 +141,8 @@ module.exports = {
         duplicateCopyTooltip: "Fichier identique au favori, mais copié au lieu d'être lié : « Copier les favoris » le remplace par un lien et libère la place",
         favoriteVersionTooltip: "Version des favoris : v{version}",
         newerThanFavorite: "Plus récent que le favori",
+        shared: "Partagé ×{count}",
+        sharedTooltip: "Aussi présent dans : {profiles}. S'il sert partout, « Passer en favori » le garde en un seul exemplaire, lié dans chaque profil.",
         outOfSync: "Désynchro"
     },
 
