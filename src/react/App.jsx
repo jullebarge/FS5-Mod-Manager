@@ -1,788 +1,83 @@
-import React, { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
+import { DEFAULT_PROFILE } from "./theme";
+import { formatSizeStats, includesFileName } from "./utils";
+import { useGameRunning, useProfileData, useToasts } from "./hooks";
+import { GitHubIcon, Spinner } from "./components/Icons";
+import { ActionButton, StatCard } from "./components/Controls";
+import { ToastStack } from "./components/Toasts";
+import { ContextMenu } from "./components/ContextMenu";
+import { ModCard } from "./components/ModCard";
+import { ConflictBanner, OutOfSyncBanner } from "./components/Banners";
+import { CreateProfileModal } from "./modals/CreateProfileModal";
+import { GithubModModal } from "./modals/GithubModModal";
+import { ExternalModModal } from "./modals/ExternalModModal";
+import { DeleteModModal } from "./modals/DeleteModModal";
+import { SettingsModal } from "./modals/SettingsModal";
 
-const colors = {
-  bg: "#222222",
-  panel: "#2b2b2b",
-  panel2: "#303030",
-  text: "#ffffff",
-  button: "#A8B655",
-  buttonText: "#222222",
-  border: "#3a3a3a"
-};
+// Mods affiches selon le filtre actif (cartes de statistiques) et la recherche
+function getDisplayedMods({ mods, defaultMods, excludedMods, filter, search, isDefaultProfile }) {
+  let displayedMods = mods;
 
-const ICON_LOAD_CONCURRENCY = 4;
-const GAME_RUNNING_POLL_INTERVAL = 10000;
-
-// Windows ignore la casse des noms de fichiers
-function includesFileName(list, fileName) {
-  const name = String(fileName || "").toLowerCase();
-  return list.some((item) => String(item || "").toLowerCase() === name);
-}
-
-function Spinner({ size = 40 }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 50 50"
-      aria-label="Chargement"
-      role="img"
-    >
-      <circle
-        cx="25"
-        cy="25"
-        r="20"
-        fill="none"
-        stroke="rgba(255,255,255,0.2)"
-        strokeWidth="4"
-      />
-      <path
-        d="M25 5 a20 20 0 0 1 20 20"
-        fill="none"
-        stroke="#A8B655"
-        strokeWidth="4"
-        strokeLinecap="round"
-      >
-        <animateTransform
-          attributeName="transform"
-          type="rotate"
-          from="0 25 25"
-          to="360 25 25"
-          dur="1s"
-          repeatCount="indefinite"
-        />
-      </path>
-    </svg>
-  );
-}
-
-function GitHubIcon({ size = 20, opacity = 0.8 }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 16 16"
-      aria-hidden="true"
-      style={{ display: "block", opacity }}
-    >
-      <path
-        fill="currentColor"
-        d="M8 0C3.58 0 0 3.67 0 8.2c0 3.63 2.29 6.71 5.47 7.8.4.08.55-.18.55-.39 0-.19-.01-.82-.01-1.49-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.54.28-.89.51-1.1-1.78-.21-3.64-.92-3.64-4.08 0-.9.31-1.64.82-2.22-.08-.21-.36-1.05.08-2.19 0 0 .67-.22 2.2.85.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.07 2.2-.85 2.2-.85.44 1.14.16 1.98.08 2.19.51.58.82 1.32.82 2.22 0 3.17-1.87 3.87-3.65 4.08.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.47.55.39A8.23 8.23 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"
-      />
-    </svg>
-  );
-}
-
-function StatCard({ label, value, icon, onClick, active, disabled }) {
-	return (
-	  <div
-		onClick={disabled ? undefined : onClick}
-		style={{
-		  background: active ? "#3a3a3a" : colors.panel2,
-		  border: active ? "1px solid #A8B655" : `1px solid ${colors.border}`,
-		  borderRadius: "10px",
-		  padding: "16px",
-		  minWidth: "160px",
-		  cursor: disabled ? "default" : onClick ? "pointer" : "default",
-		  opacity: disabled ? 0.4 : 1,
-		  transition: "all 0.2s"
-		}}
-	  >
-		<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-		  <div>
-			<div style={{ fontSize: "13px", opacity: 0.8 }}>{label}</div>
-			<div style={{ fontSize: "24px", fontWeight: 700 }}>{value}</div>
-		  </div>
-
-          {icon && (
-            <div
-              style={{
-                fontSize: "20px",
-                opacity: 0.85,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "#ffffff"
-              }}
-            >
-              {icon}
-            </div>
-          )}
-		</div>
-	  </div>
-	);
-}
-
-function ActionButton({ children, onClick, style = {}, disabled = false, title }) {
-  const baseStyle = {
-    background: colors.button,
-    color: colors.buttonText,
-    border: "none",
-    fontWeight: 700,
-    borderRadius: "8px",
-    padding: "8px 12px",
-    cursor: disabled ? "default" : "pointer",
-    transition: "all 0.2s"
-  };
-
-  const disabledStyle = disabled
-    ? {
-        background: "#555",
-        color: "#aaa",
-        opacity: 0.6,
-        cursor: "not-allowed"
-      }
-    : {};
-
-  return (
-    <button
-      onClick={disabled ? undefined : onClick}
-      disabled={disabled}
-	  title={title}
-      style={{
-        ...baseStyle,
-        ...style,
-        ...disabledStyle
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Badge({
-  children,
-  background,
-  color = "#fff",
-  title,
-  onClick,
-  disabled = false
-}) {
-  const clickable = typeof onClick === "function" && !disabled;
-
-  return (
-    <span
-      title={title}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (clickable) onClick();
-      }}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "3px 8px",
-        borderRadius: "999px",
-        fontSize: "11px",
-        fontWeight: 700,
-        background,
-        color,
-        cursor: clickable ? "pointer" : "default",
-        opacity: disabled ? 0.55 : 1,
-        userSelect: "none"
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
-function getStatusIcon(status) {
-  switch (status) {
-    case "common-linked":
-      return "⭐";
-    case "common-excluded":
-      return "🚫";
-    case "local":
-      return "📦";
-    case "directory":
-      return "📁";
-    default:
-      return "❓";
-  }
-}
-
-function getStatusTooltip(status) {
-  switch (status) {
-    case "common-linked":
-      return "Mod favori lié";
-    case "common-excluded":
-      return "Mod favori exclu";
-    case "local":
-      return "Mod local";
-    case "directory":
-      return "Mod dossier (dézippé)";
-    default:
-      return "Statut inconnu";
-  }
-}
-
-function getStatusColor(status) {
-  switch (status) {
-    case "common-linked":
-      return "#A8B655";
-    case "common-excluded":
-      return "#d9534f";
-    case "local":
-      return "#cccccc";
-    case "directory":
-      return "#5bc0de";
-    default:
-      return "#999999";
-  }
-}
-
-function formatSizeStats(bytes) {
-  const mb = bytes / (1024 * 1024);
-
-  if (mb >= 1024) {
-    const gb = mb / 1024;
-    return gb.toLocaleString("fr-FR", {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1
-    }) + " Go";
-  }
-
-  return mb.toLocaleString("fr-FR", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1
-  }) + " Mo";
-}
-
-function formatSize(bytes) {
-  if (!bytes) return "0 o";
-
-  const kb = 1024;
-  const mb = kb * 1024;
-  const gb = mb * 1024;
-
-  if (bytes >= gb) {
-    return bytes.toLocaleString("fr-FR", {
-      style: "unit",
-      unit: "gigabyte",
-      unitDisplay: "narrow",
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1
-    });
-  }
-
-  if (bytes >= mb) {
-    return (bytes / mb).toLocaleString("fr-FR", {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1
-    }) + " Mo";
-  }
-
-  if (bytes >= kb) {
-    return (bytes / kb).toLocaleString("fr-FR", {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }) + " Ko";
-  }
-
-  return bytes.toLocaleString("fr-FR") + " o";
-}
-
-function Toast({ toast }) {
-  const { text, type } = toast;
-
-  let borderColor = "#A8B655";
-  if (type === "error") borderColor = "#d9534f";
-
-  return (
-    <div
-      style={{
-        background: "#2a2a2a",
-        color: "#fff",
-        padding: "12px 16px",
-        borderRadius: "8px",
-        borderLeft: `4px solid ${borderColor}`,
-        boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-        fontSize: "14px",
-        minWidth: "250px",
-        opacity: 0,
-        transform: "translateY(20px) scale(0.95)",
-        animation: "toastAnim 0.3s ease forwards"
-      }}
-    >
-      {text}
-    </div>
-  );
-}
-
-function MenuItem({ children, onClick }) {
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        padding: "8px 12px",
-        borderRadius: "6px",
-        cursor: "pointer",
-        fontSize: "14px"
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = "#3a3a3a";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = "transparent";
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function ContextMenu({
-  menu,
-  onClose,
-  onPromote,
-  onDelete,
-  onToggleExcluded,
-  onOpenGithubRepo,
-  onUpdateGithubMod,
-  onOpenExternalUrl,
-  onOpenModZip,
-  onPromoteProfileVersion,
-  onRelinkFavorite
-}) {
-  const menuRef = useRef(null);
-  const [position, setPosition] = useState(null);
-
-  // une fois le menu mesure, on le recale pour qu'il reste entierement dans la fenetre
-  useLayoutEffect(() => {
-    if (!menu || !menuRef.current) {
-      setPosition(null);
-      return;
+  if (!isDefaultProfile) {
+    if (filter === "common") {
+      displayedMods = mods.filter((m) => m.status === "common-linked");
     }
 
-    const margin = 8;
-    const rect = menuRef.current.getBoundingClientRect();
-    setPosition({
-      left: Math.max(margin, Math.min(menu.x, window.innerWidth - rect.width - margin)),
-      top: Math.max(margin, Math.min(menu.y, window.innerHeight - rect.height - margin))
-    });
-  }, [menu]);
+    if (filter === "local") {
+      displayedMods = mods.filter((m) => m.status === "local" || m.status === "directory");
+    }
 
-  if (!menu) return null;
+    if (filter === "excluded") {
+      // favoris exclus : ils ne sont que dans Default
+      const presentInProfile = new Set(mods.map((m) => m.fileName.toLowerCase()));
+      displayedMods = defaultMods
+        .filter((m) => includesFileName(excludedMods, m.fileName))
+        .filter((m) => !presentInProfile.has(m.fileName.toLowerCase()))
+        .map((m) => ({ ...m, status: "common-excluded" }));
+    }
+  }
 
-  const { x, y, mod, selectedProfile  } = menu;
+  if (filter === "githubTracked") {
+    displayedMods = mods.filter((m) => m.github?.tracked);
+  }
 
-  return (
-    <>
-      <div
-        onClick={onClose}
-        style={{
-          position: "fixed",
-          inset: 0,
-          zIndex: 9998
-        }}
-      />
+  if (filter === "external") {
+    displayedMods = mods.filter((m) => m.external?.tracked);
+  }
 
-      <div
-        ref={menuRef}
-        style={{
-          position: "fixed",
-          top: position ? position.top : y,
-          left: position ? position.left : x,
-          visibility: position ? "visible" : "hidden",
-          background: "#2a2a2a",
-          borderRadius: "8px",
-          padding: "6px",
-          boxShadow: "0 6px 20px rgba(0,0,0,0.5)",
-          zIndex: 9999,
-          minWidth: "230px"
-        }}
-      >
-        {mod.status === "local" && selectedProfile !== "Default" && (
-          <MenuItem
-            onClick={() => {
-              onPromote(mod);
-              onClose();
-            }}
-          >
-            📦 Passer en favori
-          </MenuItem>
-        )}
+  if (search.trim()) {
+    const s = search.toLowerCase();
 
-        {mod.status === "common-linked" && (
-          <MenuItem
-            onClick={() => {
-              onToggleExcluded(mod);
-              onClose();
-            }}
-          >
-            🚫 Exclure du profil
-          </MenuItem>
-        )}
+    displayedMods = displayedMods.filter(
+      (m) =>
+        m.name.toLowerCase().includes(s) ||
+        m.fileName.toLowerCase().includes(s)
+    );
+  }
 
-        {mod.status === "common-excluded" && (
-          <MenuItem
-            onClick={() => {
-              onToggleExcluded(mod);
-              onClose();
-            }}
-          >
-            ✅ Réintégrer dans le profil
-          </MenuItem>
-        )}
-
-        {mod.status === "common-linked" && mod.isOutOfSync && (
-          <>
-            <MenuItem
-              onClick={() => {
-                onPromoteProfileVersion(mod);
-                onClose();
-              }}
-            >
-              ⬆ Garder cette version (remonter dans les favoris)
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                onRelinkFavorite(mod);
-                onClose();
-              }}
-            >
-              ⬇ Reprendre la version des favoris
-            </MenuItem>
-          </>
-        )}
-
-        {mod.github?.repoUrl && (
-          <MenuItem
-            onClick={() => {
-              onOpenGithubRepo(mod);
-              onClose();
-            }}
-          >
-            🔗 Ouvrir le lien GitHub
-          </MenuItem>
-        )}
-
-        {mod.github?.updateAvailable && (
-          <MenuItem
-            onClick={() => {
-              onUpdateGithubMod(mod);
-              onClose();
-            }}
-          >
-            ⬆ Mettre à jour depuis GitHub
-          </MenuItem>
-        )}
-
-        {mod.external?.url && (
-          <MenuItem
-            onClick={() => {
-              onOpenExternalUrl(mod.external.url);
-              onClose();
-            }}
-          >
-            🌍 Ouvrir le lien externe
-          </MenuItem>
-        )}
-
-        <MenuItem
-          onClick={() => {
-            onOpenModZip(mod);
-            onClose();
-          }}
-        >
-          {mod.isDirectory ? "📁 Ouvrir le dossier" : "🗜 Ouvrir le zip"}
-        </MenuItem>
-
-        {(mod.status === "local" || mod.status === "common-linked" || mod.status === "directory") && (
-          <MenuItem
-            onClick={() => {
-              onDelete(mod);
-              onClose();
-            }}
-          >
-            🗑 Supprimer
-          </MenuItem>
-        )}
-      </div>
-    </>
-  );
+  return displayedMods;
 }
-
-// icon : undefined = en cours de chargement, null = pas d'icone
-const ModCard = memo(function ModCard({
-  mod,
-  icon,
-  selectedProfile,
-  onCardClick
-}) {
-  const [hover, setHover] = useState(false);
-  const github = mod.github;
-  const external = mod.external;
-
-  return (
-    <div
-      style={{
-        background: "#2b2b2b",
-        border: hover ? "1px solid #A8B655" : "1px solid #3a3a3a",
-        borderRadius: "12px",
-        width: "220px",
-        overflow: "hidden",
-        cursor: "pointer",
-        transition: "all 0.2s ease",
-        transform: hover ? "scale(1.03)" : "scale(1)",
-        boxShadow: hover ? "0 0 10px rgba(168,182,85,0.3)" : "none",
-        position: "relative"
-      }}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onClick={(e) => onCardClick(mod, e)}
-      title="Cliquer pour ouvrir les actions"
-    >
-      <div
-        style={{
-          position: "absolute",
-          top: "8px",
-          right: "8px",
-          background: "rgba(0,0,0,0.6)",
-          borderRadius: "6px",
-          padding: "4px 6px",
-          fontSize: "12px",
-          color: getStatusColor(mod.status),
-          zIndex: 2,
-          opacity: 0.9
-        }}
-        title={getStatusTooltip(mod.status)}
-      >
-        {getStatusIcon(mod.status)}
-      </div>
-
-      {icon ? (
-        <img
-          src={icon}
-          alt={mod.name}
-          style={{
-            width: "100%",
-            aspectRatio: "1 / 1",
-            objectFit: "contain",
-            background: "#1a1a1a",
-            display: "block"
-          }}
-        />
-      ) : (
-        <div
-          style={{
-            width: "100%",
-            aspectRatio: "1 / 1",
-            background: "#1a1a1a",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center"
-          }}
-        >
-          {icon === undefined ? (
-            <Spinner size={32} />
-          ) : (
-            <span style={{ fontSize: "48px", opacity: 0.3 }}>🧩</span>
-          )}
-        </div>
-      )}
-
-      <div style={{ padding: "12px" }}>
-        <div style={{ fontWeight: 700, fontSize: "14px" }}>{mod.name}</div>
-        <div style={{ fontSize: "12px", opacity: 0.7 }}>v{mod.version}</div>
-        <div style={{ fontSize: "12px", opacity: 0.7 }}>{mod.author}</div>
-        <div style={{ fontSize: "12px", opacity: 0.7 }}>
-          {mod.isDirectory ? "Dossier" : formatSize(mod.size || 0)}
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "6px",
-            marginTop: "8px"
-          }}
-        >
-          {github?.tracked && (
-            <Badge background="#444" title="Mod suivi via GitHub">
-              GitHub
-            </Badge>
-          )}
-
-          {external?.tracked && (
-            <Badge background="#355c7d" title="Mod externe suivi">
-              Externe
-            </Badge>
-          )}
-
-          {github?.includePrereleases && (
-            <Badge
-              background="#5b3d1f"
-              title="Le suivi utilise aussi les pre-releases"
-            >
-              pre-release
-            </Badge>
-          )}
-
-          {github?.lastError && (
-            <Badge background="#8b2f2f" title={github.lastError}>
-              Erreur GitHub
-            </Badge>
-          )}
-
-          {github?.updateAvailable && !github?.lastError && (
-            <Badge
-              background="#a86b2a"
-              title="Une mise à jour GitHub est disponible"
-            >
-              MAJ dispo
-            </Badge>
-          )}
-
-          {mod.isOutOfSync && (
-            <Badge
-              background={mod.syncDirection === "profile-newer" ? "#2f6b3a" : "#a86b2a"}
-              title={`Version des favoris : v${mod.defaultVersion || "?"}`}
-            >
-              {mod.syncDirection === "profile-newer" ? "Plus récent que le favori" : "Désynchro"}
-            </Badge>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-});
 
 export default function App() {
   const [profiles, setProfiles] = useState([]);
-  const [activeProfile, setActiveProfile] = useState("Default");
-  const [selectedProfile, setSelectedProfile] = useState("Default");
-  const [mods, setMods] = useState([]);
-  const [defaultMods, setDefaultMods] = useState([]);
-  const [excludedMods, setExcludedMods] = useState([]);
-  const [loadingMods, setLoadingMods] = useState(false);
-  const [toasts, setToasts] = useState([]);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newProfileName, setNewProfileName] = useState("");
-  const [isInitialized, setIsInitialized] = useState(false);
-  const [filter, setFilter] = useState("all");
-  const [contextMenu, setContextMenu] = useState(null);
-  const [search, setSearch] = useState("");
-  const [appVersion, setAppVersion] = useState("");
-  const [showGithubModal, setShowGithubModal] = useState(false);
-  const [githubRepoUrl, setGithubRepoUrl] = useState("");
-  const [githubIncludePrereleases, setGithubIncludePrereleases] = useState(false);
-  const [githubUpdatingKey, setGithubUpdatingKey] = useState(null);
-  const [showExternalModal, setShowExternalModal] = useState(false);
-  const [externalZipPath, setExternalZipPath] = useState("");
-  const [externalUrl, setExternalUrl] = useState("");
-  const [icons, setIcons] = useState({});
-  const [modToDelete, setModToDelete] = useState(null);
-  const [deleteUsage, setDeleteUsage] = useState(null);
-  const [deleteFromProfiles, setDeleteFromProfiles] = useState(true);
+  const [activeProfile, setActiveProfile] = useState(DEFAULT_PROFILE);
+  const [selectedProfile, setSelectedProfile] = useState(DEFAULT_PROFILE);
   const [settings, setSettings] = useState(null);
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [settingsForm, setSettingsForm] = useState({ gamePath: "", launchUrl: "" });
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [contextMenu, setContextMenu] = useState(null);
+  // fenetre modale ouverte : "createProfile" | "github" | "external" | "settings" | null
+  const [openModal, setOpenModal] = useState(null);
+  const [modToDelete, setModToDelete] = useState(null);
   // incremente pour forcer le rechargement complet (ex. apres changement du dossier du jeu)
   const [reloadToken, setReloadToken] = useState(0);
-  const [gameRunning, setGameRunning] = useState(false);
 
-  // FS25 lance : changement de profil bloque (le jeu l'ecraserait) et mods potentiellement verrouilles
-  useEffect(() => {
-    let cancelled = false;
-
-    async function checkGame() {
-      try {
-        const running = await window.fs25.isGameRunning();
-        if (!cancelled) setGameRunning(running);
-      } catch {}
-    }
-
-    checkGame();
-    const timer = setInterval(checkGame, GAME_RUNNING_POLL_INTERVAL);
-    window.addEventListener("focus", checkGame);
-
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-      window.removeEventListener("focus", checkGame);
-    };
-  }, []);
-
-  const requestIdRef = useRef(0);
-  // iconKey deja demandes (ou en cours) : evite les doublons entre profil et Default
-  const iconRequestsRef = useRef(new Set());
-
-  function showToast(text, type = "info", duration = 3000) {
-    const id = Date.now() + Math.random();
-
-    setToasts((prev) => [...prev, { id, text, type }]);
-
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, duration);
-  }
-
-  function showErrorList(title, errors) {
-    if (!errors || errors.length === 0) return;
-
-    const details = errors.slice(0, 3).join(" • ");
-    const more = errors.length > 3 ? ` (+${errors.length - 3})` : "";
-    showToast(`${title} : ${details}${more}`, "error", 10000);
-  }
-
-  async function loadIcons(modsList, requestId) {
-    const pending = new Map();
-
-    for (const mod of modsList) {
-      if (mod.iconKey && !iconRequestsRef.current.has(mod.iconKey) && !pending.has(mod.iconKey)) {
-        pending.set(mod.iconKey, mod);
-      }
-    }
-
-    const queue = [...pending.values()];
-    for (const mod of queue) {
-      iconRequestsRef.current.add(mod.iconKey);
-    }
-
-    async function worker() {
-      while (queue.length > 0) {
-        if (requestId !== requestIdRef.current) {
-          // requete obsolete : on libere les icones non demandees pour un prochain chargement
-          for (const mod of queue) {
-            iconRequestsRef.current.delete(mod.iconKey);
-          }
-          queue.length = 0;
-          return;
-        }
-
-        const mod = queue.shift();
-        let icon = null;
-
-        try {
-          icon = await window.fs25.getModIcon(mod);
-        } catch (err) {
-          console.error("Erreur chargement icone:", mod.fileName, err);
-        }
-
-        setIcons((prev) => ({ ...prev, [mod.iconKey]: icon }));
-      }
-    }
-
-    await Promise.all(Array.from({ length: ICON_LOAD_CONCURRENCY }, worker));
-  }
-
-  async function refreshProfileData(profile, requestId) {
-    const [list, excluded, defaultList] = await Promise.all([
-      window.fs25.getMods(profile),
-      window.fs25.getExcludedMods(profile),
-      profile !== "Default" ? window.fs25.getMods("Default") : Promise.resolve([])
-    ]);
-
-    if (requestId !== requestIdRef.current) return;
-
-    setMods(list);
-    setExcludedMods(excluded);
-    setDefaultMods(defaultList);
-    setLoadingMods(false);
-
-    await loadIcons(list, requestId);
-  }
+  const { toasts, showToast, showErrorList } = useToasts();
+  const gameRunning = useGameRunning();
+  const { mods, defaultMods, excludedMods, loadingMods, icons, reload, loadIcons } =
+    useProfileData(selectedProfile, isInitialized, reloadToken);
 
   async function loadProfilesAndSettings() {
     const [p, active, s] = await Promise.all([
@@ -804,30 +99,14 @@ export default function App() {
     }
 
     init();
+    window.fs25.getAppVersion().then(setAppVersion);
   }, []);
-
-  useEffect(() => {
-    if (!isInitialized) return;
-
-    const requestId = ++requestIdRef.current;
-    setLoadingMods(true);
-
-    refreshProfileData(selectedProfile, requestId).catch((err) => {
-      if (requestId === requestIdRef.current) {
-        console.error("Erreur refreshProfileData:", err);
-        setLoadingMods(false);
-      }
-    });
-  }, [selectedProfile, isInitialized, reloadToken]);
 
   // Les favoris exclus viennent de Default : leurs icones ne sont chargees que si on les affiche
   useEffect(() => {
     if (filter !== "excluded") return;
 
-    loadIcons(
-      defaultMods.filter((m) => includesFileName(excludedMods, m.fileName)),
-      requestIdRef.current
-    );
+    loadIcons(defaultMods.filter((m) => includesFileName(excludedMods, m.fileName)));
   }, [filter, defaultMods, excludedMods]);
 
   useEffect(() => {
@@ -835,7 +114,7 @@ export default function App() {
       if (e.key === "Escape") {
         setContextMenu(null);
         setModToDelete(null);
-        setShowSettingsModal(false);
+        setOpenModal((current) => (current === "settings" ? null : current));
       }
     }
 
@@ -843,122 +122,103 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
-  useEffect(() => {
-	  async function loadVersion() {
-		const v = await window.fs25.getAppVersion();
-		setAppVersion(v);
-	  }
-	  loadVersion();
-	}, []);
+  // Affiche l'erreur d'une operation ; renvoie true si elle a reussi
+  function checkResult(result) {
+    if (!result.success) {
+      showToast(`Erreur : ${result.error}`, "error");
+      return false;
+    }
+    return true;
+  }
 
   async function handleChangeProfile() {
     const result = await window.fs25.setActiveProfile(selectedProfile);
 
-    if (result.success) {
+    if (checkResult(result)) {
       setActiveProfile(selectedProfile);
       showToast(`Profil actif mis à jour : ${selectedProfile}`);
-    } else {
-      showToast(`Erreur : ${result.error}`, "error");
     }
   }
 
-  async function handleCreateProfile() {
-    const cleanName = newProfileName.trim();
+  async function handleCreateProfile(name) {
+    const cleanName = name.trim();
     if (!cleanName) return;
 
     const result = await window.fs25.createProfile(cleanName);
 
-    if (result.success) {
-      const updated = await window.fs25.getProfiles();
-      setProfiles(updated);
+    if (checkResult(result)) {
+      setProfiles(await window.fs25.getProfiles());
       setSelectedProfile(cleanName);
-      setShowCreateModal(false);
-      setNewProfileName("");
+      setOpenModal(null);
       showToast(`Profil créé : ${cleanName}`);
-    } else {
-      showToast(`Erreur : ${result.error}`, "error");
     }
   }
 
   async function handleRepairLinks() {
-    if (selectedProfile === "Default") return;
+    if (selectedProfile === DEFAULT_PROFILE) return;
 
     showToast("Copie des mods favoris en cours...");
 
     const result = await window.fs25.repairLinks(selectedProfile);
+    if (!checkResult(result)) return;
 
-    if (result.success) {
-      const resynced = result.resyncedCount > 0
-        ? `, ${result.resyncedCount} resynchronisé(s)`
-        : "";
+    const resynced = result.resyncedCount > 0
+      ? `, ${result.resyncedCount} resynchronisé(s)`
+      : "";
 
+    showToast(
+      `${result.linkedCount} favori(s) copiés, ${result.skippedExcluded} exclus ignorés, ${result.removedDuplicates} doublon(s) remplacé(s)${resynced}`
+    );
+    if (result.keptNewerCount > 0) {
       showToast(
-        `${result.linkedCount} favori(s) copiés, ${result.skippedExcluded} exclus ignorés, ${result.removedDuplicates} doublon(s) remplacé(s)${resynced}`
+        `${result.keptNewerCount} favori(s) plus récent(s) dans le profil conservé(s) : utilise « Garder cette version » pour les remonter dans les favoris`,
+        "info",
+        8000
       );
-      if (result.keptNewerCount > 0) {
-        showToast(
-          `${result.keptNewerCount} favori(s) plus récent(s) dans le profil conservé(s) : utilise « Garder cette version » pour les remonter dans les favoris`,
-          "info",
-          8000
-        );
-      }
-      showErrorList(
-        `${result.errors.length} favori(s) non traité(s) (jeu lancé ?)`,
-        result.errors
-      );
-
-      setFilter("all");
-      const requestId = ++requestIdRef.current;
-      setLoadingMods(true);
-      await refreshProfileData(selectedProfile, requestId);
-    } else {
-      showToast(`Erreur : ${result.error}`, "error");
     }
+    showErrorList(
+      `${result.errors.length} favori(s) non traité(s) (jeu lancé ?)`,
+      result.errors
+    );
+
+    setFilter("all");
+    await reload();
   }
 
   async function handleRemoveLinks() {
-    if (selectedProfile === "Default") return;
+    if (selectedProfile === DEFAULT_PROFILE) return;
 
     showToast("Suppression des mods favoris en cours...");
 
     const result = await window.fs25.removeLinks(selectedProfile);
+    if (!checkResult(result)) return;
 
-    if (result.success) {
-      showToast(`${result.removedCount} mod(s) favori(s) supprimé(s)`);
-      showErrorList(
-        `${result.errors.length} favori(s) non supprimé(s) (jeu lancé ?)`,
-        result.errors
-      );
-      setFilter("all");
-      const requestId = ++requestIdRef.current;
-      setLoadingMods(true);
-      await refreshProfileData(selectedProfile, requestId);
-    } else {
-      showToast(`Erreur : ${result.error}`, "error");
-    }
+    showToast(`${result.removedCount} mod(s) favori(s) supprimé(s)`);
+    showErrorList(
+      `${result.errors.length} favori(s) non supprimé(s) (jeu lancé ?)`,
+      result.errors
+    );
+
+    setFilter("all");
+    await reload();
   }
 
   async function handleOpenProfileFolder() {
-    const result = await window.fs25.openProfileFolder(selectedProfile);
+    checkResult(await window.fs25.openProfileFolder(selectedProfile));
+  }
 
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-    }
+  async function handleRefreshProfile() {
+    showToast("Rafraîchissement en cours...");
+    await reload();
+    showToast(`Profil ${selectedProfile} rafraîchi`);
   }
 
   async function handleToggleExcluded(mod) {
-    if (selectedProfile === "Default") return;
+    if (selectedProfile === DEFAULT_PROFILE) return;
     if (mod.status === "local" || mod.status === "directory") return;
 
-    const result = await window.fs25.toggleExcludedMod(
-      selectedProfile,
-      mod.fileName
-    );
-
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-      return;
-    }
+    const result = await window.fs25.toggleExcludedMod(selectedProfile, mod.fileName);
+    if (!checkResult(result)) return;
 
     showToast(
       result.excluded
@@ -966,69 +226,24 @@ export default function App() {
         : `${mod.name} réintégré dans le profil`
     );
 
-    const requestId = ++requestIdRef.current;
-    setLoadingMods(true);
-    await refreshProfileData(selectedProfile, requestId);
-  }
-
-  async function handleRefreshProfile() {
-    showToast("Rafraîchissement en cours...");
-
-    const requestId = ++requestIdRef.current;
-    setLoadingMods(true);
-    await refreshProfileData(selectedProfile, requestId);
-
-    showToast(`Profil ${selectedProfile} rafraîchi`);
+    await reload();
   }
 
   async function handlePromoteToCommon(mod) {
     if (mod.status !== "local" || mod.isDirectory) return;
 
-    const result = await window.fs25.promoteToCommon(
-      selectedProfile,
-      mod.fileName
-    );
-
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-      return;
-    }
+    const result = await window.fs25.promoteToCommon(selectedProfile, mod.fileName);
+    if (!checkResult(result)) return;
 
     showToast(`${mod.name} ajouté aux mods favoris`, "success");
-
-    const requestId = ++requestIdRef.current;
-    setLoadingMods(true);
-    await refreshProfileData(selectedProfile, requestId);
+    await reload();
   }
 
-  async function openDeleteConfirm(mod) {
-    setModToDelete(mod);
-    setDeleteUsage(null);
-    setDeleteFromProfiles(true);
-
-    // dans Default, un mod peut etre un favori lie dans d'autres profils
-    if (selectedProfile === "Default" && !mod.isDirectory) {
-      const usage = await window.fs25.getFavoriteUsage(mod.fileName);
-      setDeleteUsage(usage);
-    }
-  }
-
-  function closeDeleteConfirm() {
+  async function handleDeleteMod(mod, options) {
     setModToDelete(null);
-    setDeleteUsage(null);
-  }
 
-  async function handleDeleteLocalMod(mod, options = {}) {
-    const result = await window.fs25.deleteLocalMod(
-      selectedProfile,
-      mod.fileName,
-      options
-    );
-
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-      return;
-    }
+    const result = await window.fs25.deleteLocalMod(selectedProfile, mod.fileName, options);
+    if (!checkResult(result)) return;
 
     if (result.removedFromProfiles > 0) {
       showToast(
@@ -1040,18 +255,12 @@ export default function App() {
     }
     showErrorList("Non retiré de certains profils", result.profileErrors);
 
-    const requestId = ++requestIdRef.current;
-    setLoadingMods(true);
-    await refreshProfileData(selectedProfile, requestId);
+    await reload();
   }
 
   async function handlePromoteProfileVersion(mod) {
     const result = await window.fs25.promoteProfileVersion(selectedProfile, mod.fileName);
-
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-      return;
-    }
+    if (!checkResult(result)) return;
 
     showToast(
       `${mod.name} v${mod.version} remonté dans les favoris et relié dans ${result.relinkedCount} profil(s)`,
@@ -1059,32 +268,15 @@ export default function App() {
     );
     showErrorList("Liens non mis à jour", result.errors);
 
-    const requestId = ++requestIdRef.current;
-    setLoadingMods(true);
-    await refreshProfileData(selectedProfile, requestId);
+    await reload();
   }
 
   async function handleRelinkFavorite(mod) {
     const result = await window.fs25.relinkFavorite(selectedProfile, mod.fileName);
-
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-      return;
-    }
+    if (!checkResult(result)) return;
 
     showToast(`${mod.name} : version des favoris reprise (v${mod.defaultVersion || "?"})`, "success");
-
-    const requestId = ++requestIdRef.current;
-    setLoadingMods(true);
-    await refreshProfileData(selectedProfile, requestId);
-  }
-
-  function openSettings() {
-    setSettingsForm({
-      gamePath: settings?.gamePath || "",
-      launchUrl: settings?.launchUrl || ""
-    });
-    setShowSettingsModal(true);
+    await reload();
   }
 
   async function handlePickGameFolder() {
@@ -1094,21 +286,17 @@ export default function App() {
       if (!result.canceled) {
         showToast(`Erreur : ${result.error}`, "error");
       }
-      return;
+      return null;
     }
 
-    setSettingsForm((prev) => ({ ...prev, gamePath: result.folderPath }));
+    return result.folderPath;
   }
 
-  async function handleSaveSettings() {
-    const result = await window.fs25.saveSettings(settingsForm);
+  async function handleSaveSettings(form) {
+    const result = await window.fs25.saveSettings(form);
+    if (!checkResult(result)) return;
 
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-      return;
-    }
-
-    setShowSettingsModal(false);
+    setOpenModal(null);
     showToast("Réglages enregistrés", "success");
     if (result.warning) {
       showToast(result.warning, "error", 10000);
@@ -1119,17 +307,17 @@ export default function App() {
     setReloadToken((t) => t + 1);
   }
 
-	const handleCardClick = useCallback((mod, event) => {
-	  setContextMenu({
-		mod,
-		selectedProfile,
-		x: event.clientX,
-		y: event.clientY
-	  });
-	}, [selectedProfile]);
+  const handleCardClick = useCallback((mod, event) => {
+    setContextMenu({
+      mod,
+      selectedProfile,
+      x: event.clientX,
+      y: event.clientY
+    });
+  }, [selectedProfile]);
 
-  async function handleAddGithubMod() {
-    const cleanUrl = githubRepoUrl.trim();
+  async function handleAddGithubMod(repoUrl, includePrereleases) {
+    const cleanUrl = repoUrl.trim();
 
     if (!cleanUrl) {
       showToast("Merci de saisir une URL GitHub", "error");
@@ -1138,37 +326,19 @@ export default function App() {
 
     showToast("Téléchargement du mod GitHub en cours...");
 
-    const result = await window.fs25.addGithubMod(
-      selectedProfile,
-      cleanUrl,
-      githubIncludePrereleases
-    );
-
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-      return;
-    }
+    const result = await window.fs25.addGithubMod(selectedProfile, cleanUrl, includePrereleases);
+    if (!checkResult(result)) return;
 
     showToast(`${result.fileName} téléchargé depuis ${result.repo}`);
-
-    setShowGithubModal(false);
-    setGithubRepoUrl("");
-    setGithubIncludePrereleases(false);
-
-    const requestId = ++requestIdRef.current;
-    setLoadingMods(true);
-    await refreshProfileData(selectedProfile, requestId);
+    setOpenModal(null);
+    await reload();
   }
 
   async function handleCheckGithubUpdates() {
     showToast("Vérification des mises à jour GitHub en cours...");
 
     const result = await window.fs25.checkGithubUpdates(selectedProfile);
-
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-      return;
-    }
+    if (!checkResult(result)) return;
 
     if (result.checkedCount === 0) {
       showToast("Aucun mod GitHub suivi sur ce profil");
@@ -1180,39 +350,23 @@ export default function App() {
       showToast(`Aucune mise à jour trouvée sur ${result.checkedCount} mod(s)`);
     }
 
-    const requestId = ++requestIdRef.current;
-    setLoadingMods(true);
-    await refreshProfileData(selectedProfile, requestId);
+    await reload();
   }
 
   async function handleOpenGithubRepo(mod) {
     if (!mod.github?.repoUrl) return;
-
-    const result = await window.fs25.openGithubRepo(mod.github.repoUrl);
-
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-    }
+    checkResult(await window.fs25.openGithubRepo(mod.github.repoUrl));
   }
 
   async function handleUpdateGithubMod(mod) {
     if (!mod.github?.tracked || !mod.github?.updateAvailable) return;
 
-    const updateKey = `${selectedProfile}::${mod.fileName}`;
-    setGithubUpdatingKey(updateKey);
-
     showToast(`Mise à jour de ${mod.name} en cours...`);
 
     const result = await window.fs25.updateGithubMod(selectedProfile, mod.fileName);
+    if (!checkResult(result)) return;
 
-    setGithubUpdatingKey(null);
-
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-      return;
-    }
-
-    if (result.targetProfile === "Default") {
+    if (result.targetProfile === DEFAULT_PROFILE) {
       showToast(
         `${mod.name} mis à jour dans les favoris (Default) et ${result.relinkedCount} profil(s)`,
         "success"
@@ -1222,17 +376,11 @@ export default function App() {
       showToast(`${mod.name} mis à jour`, "success");
     }
 
-    const requestId = ++requestIdRef.current;
-    setLoadingMods(true);
-    await refreshProfileData(selectedProfile, requestId);
+    await reload();
   }
-  
-  async function handleLaunchGame() {
-    const result = await window.fs25.launchGame();
 
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-    }
+  async function handleLaunchGame() {
+    checkResult(await window.fs25.launchGame());
   }
 
   async function handlePickExternalZip() {
@@ -1242,145 +390,78 @@ export default function App() {
       if (!result.canceled) {
         showToast(`Erreur : ${result.error}`, "error");
       }
-      return;
+      return null;
     }
 
-    setExternalZipPath(result.filePath);
+    return result.filePath;
   }
 
-  async function handleAddExternalMod() {
-    const zipPath = externalZipPath.trim();
-    const url = externalUrl.trim();
+  async function handleAddExternalMod(zipPath, url) {
+    const cleanZipPath = zipPath.trim();
+    const cleanUrl = url.trim();
 
-    if (!zipPath) {
+    if (!cleanZipPath) {
       showToast("Merci de sélectionner un fichier ZIP", "error");
       return;
     }
 
-    if (!url) {
+    if (!cleanUrl) {
       showToast("Merci de saisir une URL", "error");
       return;
     }
 
-    const result = await window.fs25.addExternalMod(selectedProfile, zipPath, url);
-
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-      return;
-    }
+    const result = await window.fs25.addExternalMod(selectedProfile, cleanZipPath, cleanUrl);
+    if (!checkResult(result)) return;
 
     showToast(`${result.fileName} ajouté comme mod externe`, "success");
-
-    setShowExternalModal(false);
-    setExternalZipPath("");
-    setExternalUrl("");
-
-    const requestId = ++requestIdRef.current;
-    setLoadingMods(true);
-    await refreshProfileData(selectedProfile, requestId);
+    setOpenModal(null);
+    await reload();
   }
 
   async function handleOpenExternalUrl(url) {
-    const result = await window.fs25.openExternalUrl(url);
-
-    if (!result.success) {
-      showToast(`Erreur : ${result.error}`, "error");
-    }
+    checkResult(await window.fs25.openExternalUrl(url));
   }
 
   async function handleOpenModZip(mod) {
-  const targetProfile =
-    mod.status === "common-linked" || mod.status === "common-excluded"
-      ? "Default"
-      : selectedProfile;
+    // un favori (lie ou exclu) s'ouvre depuis son original dans Default
+    const targetProfile =
+      mod.status === "common-linked" || mod.status === "common-excluded"
+        ? DEFAULT_PROFILE
+        : selectedProfile;
 
-  const result = await window.fs25.openModZip(targetProfile, mod.fileName);
-
-  if (!result.success) {
-    showToast(`Erreur : ${result.error}`, "error");
+    checkResult(await window.fs25.openModZip(targetProfile, mod.fileName));
   }
-}
-  
-  const hasPendingChange = selectedProfile !== activeProfile;
-  const isDefaultProfile = selectedProfile === "Default";
 
-  const totalMods = mods.length;
+  const hasPendingChange = selectedProfile !== activeProfile;
+  const isDefaultProfile = selectedProfile === DEFAULT_PROFILE;
+
   const commonMods = mods.filter((m) => m.status === "common-linked").length;
   const localMods = mods.filter((m) => m.status === "local" || m.status === "directory").length;
-  const excludedCount = excludedMods.length;
   const githubTrackedCount = mods.filter((m) => m.github?.tracked).length;
   const hasGithubTrackedMods = githubTrackedCount > 0;
-  const githubUpdatesCount = mods.filter((m) => m.github?.updateAvailable).length;
-  const externalModsCount = mods.filter((m) => m.external?.tracked).length
+  const externalModsCount = mods.filter((m) => m.external?.tracked).length;
 
   const totalSize = mods
     .filter((m) => m.status === "local")
     .reduce((sum, m) => sum + (m.size || 0), 0);
 
-  const presentInProfile = new Set(mods.map((m) => m.fileName.toLowerCase()));
   const conflictingMods = mods.filter((m) => includesFileName(excludedMods, m.fileName));
   const outOfSyncFavorites = isDefaultProfile
     ? []
     : mods.filter((m) => m.status === "common-linked" && m.isOutOfSync);
 
-  let displayedMods = mods;
-
-  if (!isDefaultProfile) {
-    if (filter === "common") {
-      displayedMods = mods.filter((m) => m.status === "common-linked");
-    }
-
-    if (filter === "local") {
-      displayedMods = mods.filter((m) => m.status === "local" || m.status === "directory");
-    }
-
-    if (filter === "excluded") {
-      displayedMods = defaultMods
-        .filter((m) => includesFileName(excludedMods, m.fileName))
-        .filter((m) => !presentInProfile.has(m.fileName.toLowerCase()))
-        .map((m) => ({
-          ...m,
-          status: "common-excluded"
-        }));
-    }
-  }
-   
-   if (filter === "githubTracked") {
-    displayedMods = mods.filter((m) => m.github?.tracked);
-  }
-
-  if (filter === "external") {
-    displayedMods = mods.filter((m) => m.external?.tracked);
-  }
-  
-	if (search.trim()) {
-	  const s = search.toLowerCase();
-
-	  displayedMods = displayedMods.filter(
-		(m) =>
-		  m.name.toLowerCase().includes(s) ||
-		  m.fileName.toLowerCase().includes(s)
-	  );
-	}
+  const displayedMods = getDisplayedMods({
+    mods,
+    defaultMods,
+    excludedMods,
+    filter,
+    search,
+    isDefaultProfile
+  });
 
   return (
-    <div
-      style={{
-        height: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        background: colors.bg,
-        color: colors.text,
-        fontFamily: "Segoe UI, sans-serif"
-      }}
-    >
-      <div
-        style={{
-          padding: "24px",
-          borderBottom: "1px solid #3a3a3a",
-          flexShrink: 0
-        }}
-      >
+    <div className="app">
+      <div className="app-header">
         <div
           style={{
             display: "flex",
@@ -1406,30 +487,20 @@ export default function App() {
           </div>
 
           <div style={{ minWidth: "280px" }}>
-            <label
-              htmlFor="profile-select"
-              style={{ display: "block", fontSize: "13px", marginBottom: "6px" }}
-            >
+            <label htmlFor="profile-select" className="field-label">
               Profil sélectionné
             </label>
             <select
               id="profile-select"
+              className="text-input text-input--panel"
               value={selectedProfile}
               onChange={(e) => {
                 setSelectedProfile(e.target.value);
                 setFilter("all");
               }}
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: "8px",
-                border: `1px solid ${colors.border}`,
-                background: colors.panel,
-                color: colors.text,
-                fontSize: "14px"
-              }}
+              style={{ width: "100%" }}
             >
-              <option value="Default">Default</option>
+              <option value={DEFAULT_PROFILE}>{DEFAULT_PROFILE}</option>
               {profiles.map((profile) => (
                 <option key={profile} value={profile}>
                   {profile}
@@ -1438,223 +509,109 @@ export default function App() {
             </select>
 
             {hasPendingChange && (
-              <div
-                style={{
-                  marginTop: "8px",
-                  fontSize: "12px",
-                  color: "#cccccc"
-                }}
-              >
+              <div style={{ marginTop: "8px", fontSize: "12px", color: "#cccccc" }}>
                 Changement non appliqué
               </div>
             )}
           </div>
         </div>
 
-		<div
-		  style={{
-			display: "flex",
-			flexDirection: "column",
-			gap: "12px",
-			marginBottom: "20px"
-		  }}
-		>
-		  {/* Ligne 1 */}
-		  <div
-			style={{
-			  display: "flex",
-			  gap: "12px",
-			  flexWrap: "wrap",
-			  alignItems: "center"
-			}}
-		  >
-			<ActionButton
-			  onClick={handleChangeProfile}
-			  disabled={!hasPendingChange || gameRunning}
-			  title={gameRunning ? "Ferme FS25 avant de changer de profil" : undefined}
-			>
-			  Changer de profil
-			</ActionButton>
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "20px" }}>
+          <div className="button-row">
+            <ActionButton
+              onClick={handleChangeProfile}
+              disabled={!hasPendingChange || gameRunning}
+              title={gameRunning ? "Ferme FS25 avant de changer de profil" : undefined}
+            >
+              Changer de profil
+            </ActionButton>
 
-			<ActionButton onClick={() => setShowCreateModal(true)}>
-			  Créer un profil
-			</ActionButton>
+            <ActionButton onClick={() => setOpenModal("createProfile")}>
+              Créer un profil
+            </ActionButton>
 
-			<ActionButton onClick={handleOpenProfileFolder}>
-			  Ouvrir le dossier
-			</ActionButton>
+            <ActionButton onClick={handleOpenProfileFolder}>
+              Ouvrir le dossier
+            </ActionButton>
 
-			<ActionButton onClick={handleRefreshProfile}>
-			  Rafraîchir
-			</ActionButton>
-			
-			<ActionButton
-			  onClick={handleLaunchGame}
-			  disabled={!settings?.launchUrl}
-			  title={settings?.launchUrl ? settings.launchUrl : "Aucune URL de lancement : voir Réglages"}
-			>
-			  Lancer le jeu
-			</ActionButton>
+            <ActionButton onClick={handleRefreshProfile}>
+              Rafraîchir
+            </ActionButton>
 
-			<ActionButton onClick={openSettings}>
-			  ⚙ Réglages
-			</ActionButton>
-		  </div>
+            <ActionButton
+              onClick={handleLaunchGame}
+              disabled={!settings?.launchUrl}
+              title={settings?.launchUrl ? settings.launchUrl : "Aucune URL de lancement : voir Réglages"}
+            >
+              Lancer le jeu
+            </ActionButton>
 
-		  {/* Ligne 2 */}
-		  <div
-			style={{
-			  display: "flex",
-			  gap: "12px",
-			  flexWrap: "wrap",
-			  alignItems: "center"
-			}}
-		  >
-			<ActionButton
-			  onClick={handleRepairLinks}
-			  disabled={selectedProfile === "Default"}
-			>
-			  Copier les favoris dans le profil
-			</ActionButton>
-
-			<ActionButton
-			  onClick={handleRemoveLinks}
-			  disabled={commonMods === 0 || selectedProfile === "Default"}
-			  style={{ background: "#d9534f", color: "#fff" }}
-			>
-			  Supprimer les favoris du profil
-			</ActionButton>
-
-			<ActionButton onClick={() => setShowGithubModal(true)}>
-			  Ajouter un mod GitHub
-			</ActionButton>
-
-			<ActionButton
-			  onClick={hasGithubTrackedMods ? handleCheckGithubUpdates : undefined}
-			  disabled={!hasGithubTrackedMods}
-			  title={
-				hasGithubTrackedMods
-				  ? "Vérifier les mises à jour des mods GitHub"
-				  : "Aucun mod GitHub suivi sur ce profil"
-			  }
-			>
-			  Vérifier les MAJ GitHub
-			</ActionButton>
-
-			<ActionButton onClick={() => setShowExternalModal(true)}>
-			  Ajouter un mod externe
-			</ActionButton>
-		  </div>
-		</div>
-		
-        {conflictingMods.length > 0 && (
-         <div
-		  style={{
-			marginTop: "16px",
-			marginBottom: "20px",
-			padding: "12px 16px",
-			background: "#4a3320",
-			border: "1px solid #a86b2a",
-			borderRadius: "8px",
-			color: "#ffd28a"
-		  }}
-		>
-		  <div style={{ fontWeight: 700, marginBottom: "6px" }}>
-			{conflictingMods.length} mod(s) en conflit :
-		  </div>
-
-		  <div style={{ fontSize: "13px", lineHeight: "1.4" }}>
-			{conflictingMods.slice(0, 10).map(m => m.name).join(", ")}
-			{conflictingMods.length > 10 && " ..."}
-		  </div>
-		</div>
-        )}
-
-        {outOfSyncFavorites.length > 0 && (
-          <div
-            style={{
-              marginTop: "16px",
-              marginBottom: "20px",
-              padding: "12px 16px",
-              background: "#4a3320",
-              border: "1px solid #a86b2a",
-              borderRadius: "8px",
-              color: "#ffd28a"
-            }}
-          >
-            <div style={{ fontWeight: 700, marginBottom: "8px" }}>
-              {outOfSyncFavorites.length} favori(s) désynchronisé(s) :
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px" }}>
-              {outOfSyncFavorites.slice(0, 10).map((m) => {
-                const profileNewer = m.syncDirection === "profile-newer";
-
-                return (
-                  <div
-                    key={m.fileName}
-                    style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}
-                  >
-                    <span style={{ fontWeight: 600 }}>{m.name}</span>
-                    <span style={{ opacity: 0.85 }}>
-                      profil v{m.version} · favoris v{m.defaultVersion || "?"}
-                      {profileNewer ? " (profil plus récent)" : ""}
-                    </span>
-                    <ActionButton
-                      onClick={() => handlePromoteProfileVersion(m)}
-                      title="Remplace la version des favoris (Default) par celle de ce profil, puis relie tous les profils qui l'utilisent"
-                      style={{
-                        padding: "4px 10px",
-                        fontSize: "12px",
-                        ...(profileNewer ? {} : { background: "#555", color: "#fff" })
-                      }}
-                    >
-                      ⬆ Garder celle du profil
-                    </ActionButton>
-                    <ActionButton
-                      onClick={() => handleRelinkFavorite(m)}
-                      title="Remplace la copie de ce profil par la version des favoris (l'ancienne copie part à la corbeille)"
-                      style={{
-                        padding: "4px 10px",
-                        fontSize: "12px",
-                        ...(profileNewer ? { background: "#555", color: "#fff" } : {})
-                      }}
-                    >
-                      ⬇ Reprendre celle des favoris
-                    </ActionButton>
-                  </div>
-                );
-              })}
-              {outOfSyncFavorites.length > 10 && <div>...</div>}
-            </div>
+            <ActionButton onClick={() => setOpenModal("settings")}>
+              ⚙ Réglages
+            </ActionButton>
           </div>
-        )}
 
-        <div
-          style={{
-            display: "flex",
-            gap: "10px",
-            marginTop: "10px",
-            flexWrap: "wrap"
-          }}
-        >
+          <div className="button-row">
+            <ActionButton onClick={handleRepairLinks} disabled={isDefaultProfile}>
+              Copier les favoris dans le profil
+            </ActionButton>
+
+            <ActionButton
+              onClick={handleRemoveLinks}
+              disabled={commonMods === 0 || isDefaultProfile}
+              variant="danger"
+            >
+              Supprimer les favoris du profil
+            </ActionButton>
+
+            <ActionButton onClick={() => setOpenModal("github")}>
+              Ajouter un mod GitHub
+            </ActionButton>
+
+            <ActionButton
+              onClick={handleCheckGithubUpdates}
+              disabled={!hasGithubTrackedMods}
+              title={
+                hasGithubTrackedMods
+                  ? "Vérifier les mises à jour des mods GitHub"
+                  : "Aucun mod GitHub suivi sur ce profil"
+              }
+            >
+              Vérifier les MAJ GitHub
+            </ActionButton>
+
+            <ActionButton onClick={() => setOpenModal("external")}>
+              Ajouter un mod externe
+            </ActionButton>
+          </div>
+        </div>
+
+        <ConflictBanner mods={conflictingMods} />
+
+        <OutOfSyncBanner
+          mods={outOfSyncFavorites}
+          onPromote={handlePromoteProfileVersion}
+          onRelink={handleRelinkFavorite}
+        />
+
+        <div style={{ display: "flex", gap: "10px", marginTop: "10px", flexWrap: "wrap" }}>
           <StatCard
             label="Tous les mods"
-			icon="📁"
-            value={totalMods}
+            icon="📁"
+            value={mods.length}
             onClick={() => setFilter("all")}
             active={filter === "all"}
           />
 
           <StatCard
-			label="Taille"
-			value={formatSizeStats(totalSize)}
-			icon="💾"
-		  />
+            label="Taille"
+            value={formatSizeStats(totalSize)}
+            icon="💾"
+          />
 
           <StatCard
             label="Favoris"
-			icon="⭐"
+            icon="⭐"
             value={commonMods}
             onClick={!isDefaultProfile ? () => setFilter("common") : undefined}
             active={filter === "common"}
@@ -1663,7 +620,7 @@ export default function App() {
 
           <StatCard
             label="Locaux"
-			icon="📦"
+            icon="📦"
             value={localMods}
             onClick={() => setFilter("local")}
             active={filter === "local"}
@@ -1671,14 +628,14 @@ export default function App() {
 
           <StatCard
             label="Exclus"
-			icon="🚫"
-            value={excludedCount}
+            icon="🚫"
+            value={excludedMods.length}
             onClick={!isDefaultProfile ? () => setFilter("excluded") : undefined}
             active={filter === "excluded"}
             disabled={isDefaultProfile}
           />
-		  
-		  <StatCard
+
+          <StatCard
             label="Suivis GitHub"
             icon={<GitHubIcon size={20} />}
             value={githubTrackedCount}
@@ -1686,7 +643,7 @@ export default function App() {
             active={filter === "githubTracked"}
           />
 
-         <StatCard
+          <StatCard
             label="Mods externes"
             icon="🌍"
             value={externalModsCount}
@@ -1694,39 +651,20 @@ export default function App() {
             active={filter === "external"}
           />
         </div>
-		<input
-		  type="text"
-		  placeholder="Rechercher un mod..."
-		  value={search}
-		  onChange={(e) => setSearch(e.target.value)}
-		  style={{
-			width: "300px",
-			padding: "10px 12px",
-			borderRadius: "8px",
-			border: `1px solid ${colors.border}`,
-			background: colors.panel,
-			color: colors.text,
-			fontSize: "14px",
-			marginTop: "10px"
-		  }}
-		/>
+
+        <input
+          type="text"
+          className="text-input text-input--panel"
+          placeholder="Rechercher un mod..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ width: "300px", marginTop: "10px" }}
+        />
       </div>
 
-      <div
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: "24px"
-        }}
-      >
+      <div className="app-content">
         {loadingMods ? (
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              marginTop: "50px"
-            }}
-          >
+          <div style={{ display: "flex", justifyContent: "center", marginTop: "50px" }}>
             <Spinner />
           </div>
         ) : displayedMods.length === 0 ? (
@@ -1734,537 +672,80 @@ export default function App() {
             Aucun mod trouvé pour ce profil.
           </div>
         ) : (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-              gap: "16px"
-            }}
-          >
+          <div className="mod-grid">
             {displayedMods.map((mod) => (
-			<ModCard
-			  key={`${mod.fileName}-${mod.status}`}
-			  mod={mod}
-			  icon={mod.iconKey ? icons[mod.iconKey] : null}
-			  selectedProfile={selectedProfile}
-			  onCardClick={handleCardClick}
-			/>
+              <ModCard
+                key={`${mod.fileName}-${mod.status}`}
+                mod={mod}
+                icon={mod.iconKey ? icons[mod.iconKey] : null}
+                onCardClick={handleCardClick}
+              />
             ))}
           </div>
         )}
       </div>
 
-      {showCreateModal && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.65)",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            zIndex: 1000
-          }}
-        >
-          <div
-            style={{
-              background: colors.panel,
-              border: `1px solid ${colors.border}`,
-              borderRadius: "12px",
-              padding: "24px",
-              width: "340px",
-              boxSizing: "border-box"
-            }}
-          >
-            <h3 style={{ marginTop: 0, marginBottom: "16px" }}>
-              Créer un profil
-            </h3>
-
-            <input
-              type="text"
-              value={newProfileName}
-              onChange={(e) => setNewProfileName(e.target.value)}
-              placeholder="Nom du profil"
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: "8px",
-                border: `1px solid ${colors.border}`,
-                background: colors.panel2,
-                color: colors.text,
-                fontSize: "14px",
-                boxSizing: "border-box",
-                marginBottom: "16px"
-              }}
-            />
-
-            <div
-              style={{
-                display: "flex",
-                gap: "10px",
-                justifyContent: "flex-end"
-              }}
-            >
-              <ActionButton onClick={() => setShowCreateModal(false)}>
-                Annuler
-              </ActionButton>
-              <ActionButton onClick={handleCreateProfile}>Valider</ActionButton>
-            </div>
-          </div>
-        </div>
+      {openModal === "createProfile" && (
+        <CreateProfileModal
+          onCancel={() => setOpenModal(null)}
+          onCreate={handleCreateProfile}
+        />
       )}
-	  
-	  {showExternalModal && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.65)",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            zIndex: 1000
-          }}
-        >
-          <div
-            style={{
-              background: colors.panel,
-              border: `1px solid ${colors.border}`,
-              borderRadius: "12px",
-              padding: "24px",
-              width: "520px",
-              boxSizing: "border-box"
-            }}
-          >
-            <h3 style={{ marginTop: 0, marginBottom: "16px" }}>
-              Ajouter un mod externe
-            </h3>
 
-            <div style={{ fontSize: "13px", opacity: 0.85, marginBottom: "12px" }}>
-              Le ZIP sera copié dans le profil sélectionné :{" "}
-              <strong>{selectedProfile}</strong>
-            </div>
+      {openModal === "external" && (
+        <ExternalModModal
+          profile={selectedProfile}
+          onCancel={() => setOpenModal(null)}
+          onPickZip={handlePickExternalZip}
+          onSubmit={handleAddExternalMod}
+        />
+      )}
 
-            <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
-              <input
-                type="text"
-                value={externalZipPath}
-                readOnly
-                placeholder="Aucun ZIP sélectionné"
-                style={{
-                  flex: 1,
-                  padding: "10px 12px",
-                  borderRadius: "8px",
-                  border: `1px solid ${colors.border}`,
-                  background: colors.panel2,
-                  color: colors.text,
-                  fontSize: "14px",
-                  boxSizing: "border-box"
-                }}
-              />
+      {openModal === "github" && (
+        <GithubModModal
+          profile={selectedProfile}
+          onCancel={() => setOpenModal(null)}
+          onSubmit={handleAddGithubMod}
+        />
+      )}
 
-              <ActionButton onClick={handlePickExternalZip}>
-                Choisir un ZIP
-              </ActionButton>
-            </div>
-
-            <input
-              type="text"
-              value={externalUrl}
-              onChange={(e) => setExternalUrl(e.target.value)}
-              placeholder="https://..."
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: "8px",
-                border: `1px solid ${colors.border}`,
-                background: colors.panel2,
-                color: colors.text,
-                fontSize: "14px",
-                boxSizing: "border-box",
-                marginBottom: "12px"
-              }}
-            />
-
-            <div
-              style={{
-                fontSize: "12px",
-                opacity: 0.7,
-                lineHeight: "1.4",
-                marginBottom: "16px"
-              }}
-            >
-              Exemples : page KingMods, page de forum, page perso du mod.
-            </div>
-
-            <div
-              style={{
-                display: "flex",
-                gap: "10px",
-                justifyContent: "flex-end"
-              }}
-            >
-              <ActionButton
-                onClick={() => {
-                  setShowExternalModal(false);
-                  setExternalZipPath("");
-                  setExternalUrl("");
-                }}
-              >
-                Annuler
-              </ActionButton>
-
-              <ActionButton onClick={handleAddExternalMod}>
-                Ajouter
-              </ActionButton>
-            </div>
-          </div>
-        </div>
+      {openModal === "settings" && (
+        <SettingsModal
+          settings={settings}
+          onCancel={() => setOpenModal(null)}
+          onPickFolder={handlePickGameFolder}
+          onSave={handleSaveSettings}
+        />
       )}
 
       {modToDelete && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.65)",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            zIndex: 1000
-          }}
-        >
-          <div
-            style={{
-              background: colors.panel,
-              border: `1px solid ${colors.border}`,
-              borderRadius: "12px",
-              padding: "24px",
-              width: "460px",
-              boxSizing: "border-box"
-            }}
-          >
-            <h3 style={{ marginTop: 0, marginBottom: "16px" }}>
-              Supprimer {modToDelete.name} ?
-            </h3>
-
-            <div style={{ fontSize: "13px", opacity: 0.85, lineHeight: "1.5", marginBottom: "16px" }}>
-              {modToDelete.isDirectory ? "Le dossier" : "Le fichier"}{" "}
-              <strong>{modToDelete.fileName}</strong> sera déplacé dans la corbeille de Windows.
-            </div>
-
-            {modToDelete.status === "common-linked" && (
-              <div style={{ fontSize: "12px", opacity: 0.7, lineHeight: "1.4", marginBottom: "16px" }}>
-                Le mod reste dans les favoris (Default) et reviendra à la prochaine copie des
-                favoris. Pour le retirer durablement de ce profil, utilise plutôt « Exclure du profil ».
-              </div>
-            )}
-
-            {isDefaultProfile && !modToDelete.isDirectory && !deleteUsage && (
-              <div style={{ fontSize: "12px", opacity: 0.7, marginBottom: "16px" }}>
-                Recherche des profils qui utilisent ce favori...
-              </div>
-            )}
-
-            {deleteUsage && deleteUsage.linked.length > 0 && (
-              <div style={{ fontSize: "13px", lineHeight: "1.4", marginBottom: "16px" }}>
-                <div style={{ marginBottom: "8px" }}>
-                  Ce favori est lié dans {deleteUsage.linked.length} profil(s) :{" "}
-                  <strong>{deleteUsage.linked.join(", ")}</strong>
-                </div>
-                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={deleteFromProfiles}
-                    onChange={(e) => setDeleteFromProfiles(e.target.checked)}
-                  />
-                  Le retirer aussi de ces profils
-                </label>
-              </div>
-            )}
-
-            {deleteUsage && deleteUsage.linked.length === 0 && (
-              <div style={{ fontSize: "12px", opacity: 0.7, marginBottom: "16px" }}>
-                Aucun profil n'utilise ce mod comme favori.
-              </div>
-            )}
-
-            <div
-              style={{
-                display: "flex",
-                gap: "10px",
-                justifyContent: "flex-end"
-              }}
-            >
-              <ActionButton onClick={closeDeleteConfirm}>
-                Annuler
-              </ActionButton>
-
-              <ActionButton
-                disabled={isDefaultProfile && !modToDelete.isDirectory && !deleteUsage}
-                onClick={() => {
-                  const mod = modToDelete;
-                  const removeFromProfiles = !!deleteUsage && deleteUsage.linked.length > 0 && deleteFromProfiles;
-                  closeDeleteConfirm();
-                  handleDeleteLocalMod(mod, { removeFromProfiles });
-                }}
-                style={{ background: "#d9534f", color: "#fff" }}
-              >
-                Supprimer
-              </ActionButton>
-            </div>
-          </div>
-        </div>
+        <DeleteModModal
+          mod={modToDelete}
+          isDefaultProfile={isDefaultProfile}
+          onCancel={() => setModToDelete(null)}
+          onConfirm={(options) => handleDeleteMod(modToDelete, options)}
+        />
       )}
 
-      {showSettingsModal && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.65)",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            zIndex: 1000
-          }}
-        >
-          <div
-            style={{
-              background: colors.panel,
-              border: `1px solid ${colors.border}`,
-              borderRadius: "12px",
-              padding: "24px",
-              width: "560px",
-              boxSizing: "border-box"
-            }}
-          >
-            <h3 style={{ marginTop: 0, marginBottom: "16px" }}>Réglages</h3>
-
-            <label style={{ display: "block", fontSize: "13px", marginBottom: "6px" }}>
-              Dossier du jeu (contient gameSettings.xml, mods et modsCartes)
-            </label>
-            <div style={{ display: "flex", gap: "10px", marginBottom: "6px" }}>
-              <input
-                type="text"
-                value={settingsForm.gamePath}
-                onChange={(e) => setSettingsForm((prev) => ({ ...prev, gamePath: e.target.value }))}
-                style={{
-                  flex: 1,
-                  padding: "10px 12px",
-                  borderRadius: "8px",
-                  border: `1px solid ${colors.border}`,
-                  background: colors.panel2,
-                  color: colors.text,
-                  fontSize: "14px",
-                  boxSizing: "border-box"
-                }}
-              />
-              <ActionButton onClick={handlePickGameFolder}>Parcourir</ActionButton>
-            </div>
-            <div style={{ fontSize: "12px", opacity: 0.7, marginBottom: "16px" }}>
-              Par défaut : {settings?.defaultGamePath}
-            </div>
-
-            <label style={{ display: "block", fontSize: "13px", marginBottom: "6px" }}>
-              URL de lancement du jeu (bouton « Lancer le jeu »)
-            </label>
-            <input
-              type="text"
-              value={settingsForm.launchUrl}
-              onChange={(e) => setSettingsForm((prev) => ({ ...prev, launchUrl: e.target.value }))}
-              placeholder="playnite://playnite/start/<id> ou steam://rungameid/<id>"
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: "8px",
-                border: `1px solid ${colors.border}`,
-                background: colors.panel2,
-                color: colors.text,
-                fontSize: "14px",
-                boxSizing: "border-box",
-                marginBottom: "6px"
-              }}
-            />
-            <div style={{ fontSize: "12px", opacity: 0.7, lineHeight: "1.4", marginBottom: "16px" }}>
-              Laisser vide pour désactiver le bouton.
-            </div>
-
-            <div
-              style={{
-                display: "flex",
-                gap: "10px",
-                justifyContent: "flex-end"
-              }}
-            >
-              <ActionButton onClick={() => setShowSettingsModal(false)}>
-                Annuler
-              </ActionButton>
-              <ActionButton onClick={handleSaveSettings}>Enregistrer</ActionButton>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showGithubModal && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.65)",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            zIndex: 1000
-          }}
-        >
-          <div
-            style={{
-              background: colors.panel,
-              border: `1px solid ${colors.border}`,
-              borderRadius: "12px",
-              padding: "24px",
-              width: "460px",
-              boxSizing: "border-box"
-            }}
-          >
-            <h3 style={{ marginTop: 0, marginBottom: "16px" }}>
-              Ajouter un mod GitHub
-            </h3>
-
-            <div style={{ fontSize: "13px", opacity: 0.85, marginBottom: "10px" }}>
-              Le ZIP du mod sera téléchargé dans le profil sélectionné :
-              {" "}
-              <strong>{selectedProfile}</strong>
-            </div>
-
-            <input
-              type="text"
-              value={githubRepoUrl}
-              onChange={(e) => setGithubRepoUrl(e.target.value)}
-              placeholder="https://github.com/owner/repo"
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: "8px",
-                border: `1px solid ${colors.border}`,
-                background: colors.panel2,
-                color: colors.text,
-                fontSize: "14px",
-                boxSizing: "border-box",
-                marginBottom: "14px"
-              }}
-            />
-
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-                fontSize: "14px",
-                marginBottom: "14px",
-                cursor: "pointer"
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={githubIncludePrereleases}
-                onChange={(e) => setGithubIncludePrereleases(e.target.checked)}
-              />
-              Inclure les pre-releases
-            </label>
-
-            <div
-              style={{
-                fontSize: "12px",
-                opacity: 0.7,
-                lineHeight: "1.4",
-                marginBottom: "16px"
-              }}
-            >
-              Si cette option est décochée, seule la dernière release stable sera utilisée.
-            </div>
-
-            <div
-              style={{
-                display: "flex",
-                gap: "10px",
-                justifyContent: "flex-end"
-              }}
-            >
-              <ActionButton
-                onClick={() => {
-                  setShowGithubModal(false);
-                  setGithubRepoUrl("");
-                  setGithubIncludePrereleases(false);
-                }}
-              >
-                Annuler
-              </ActionButton>
-
-              <ActionButton onClick={handleAddGithubMod}>
-                Télécharger
-              </ActionButton>
-            </div>
-          </div>
-        </div>
-      )}
-	  
-	<div
-	  style={{
-		position: "fixed",
-		bottom: "10px",
-		left: "20px",
-		fontSize: "11px",
-		opacity: 0.6
-	  }}
-	>
-	  FS25 Mod Manager v{appVersion} • © JulLeBarge
-	</div>
-      <div
-        style={{
-          position: "fixed",
-          bottom: "20px",
-          right: "20px",
-          display: "flex",
-          flexDirection: "column",
-          gap: "10px",
-          zIndex: 9999
-        }}
-      >
-        {toasts.map((toast) => (
-          <Toast key={toast.id} toast={toast} />
-        ))}
+      <div className="app-footer">
+        FS25 Mod Manager v{appVersion} • © JulLeBarge
       </div>
 
-      <style>
-        {`
-          @keyframes toastAnim {
-            from {
-              opacity: 0;
-              transform: translateY(20px) scale(0.95);
-            }
-            to {
-              opacity: 1;
-              transform: translateY(0) scale(1);
-            }
-          }
-        `}
-      </style>
+      <ToastStack toasts={toasts} />
 
-	<ContextMenu
-	  menu={contextMenu}
-	  onClose={() => setContextMenu(null)}
-	  onPromote={handlePromoteToCommon}
-	  onDelete={openDeleteConfirm}
-	  onPromoteProfileVersion={handlePromoteProfileVersion}
-	  onRelinkFavorite={handleRelinkFavorite}
-	  onToggleExcluded={handleToggleExcluded}
-	  onOpenGithubRepo={handleOpenGithubRepo}
-	  onUpdateGithubMod={handleUpdateGithubMod}
-	  onOpenExternalUrl={handleOpenExternalUrl}
-	  onOpenModZip={handleOpenModZip}
-	/>
+      <ContextMenu
+        menu={contextMenu}
+        onClose={() => setContextMenu(null)}
+        onPromote={handlePromoteToCommon}
+        onDelete={setModToDelete}
+        onPromoteProfileVersion={handlePromoteProfileVersion}
+        onRelinkFavorite={handleRelinkFavorite}
+        onToggleExcluded={handleToggleExcluded}
+        onOpenGithubRepo={handleOpenGithubRepo}
+        onUpdateGithubMod={handleUpdateGithubMod}
+        onOpenExternalUrl={handleOpenExternalUrl}
+        onOpenModZip={handleOpenModZip}
+      />
     </div>
   );
 }
