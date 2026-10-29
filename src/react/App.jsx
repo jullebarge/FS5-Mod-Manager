@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 const colors = {
   bg: "#222222",
@@ -11,6 +11,13 @@ const colors = {
 };
 
 const ICON_LOAD_CONCURRENCY = 4;
+const GAME_RUNNING_POLL_INTERVAL = 10000;
+
+// Windows ignore la casse des noms de fichiers
+function includesFileName(list, fileName) {
+  const name = String(fileName || "").toLowerCase();
+  return list.some((item) => String(item || "").toLowerCase() === name);
+}
 
 function Spinner({ size = 40 }) {
   return (
@@ -337,6 +344,24 @@ function ContextMenu({
   onPromoteProfileVersion,
   onRelinkFavorite
 }) {
+  const menuRef = useRef(null);
+  const [position, setPosition] = useState(null);
+
+  // une fois le menu mesure, on le recale pour qu'il reste entierement dans la fenetre
+  useLayoutEffect(() => {
+    if (!menu || !menuRef.current) {
+      setPosition(null);
+      return;
+    }
+
+    const margin = 8;
+    const rect = menuRef.current.getBoundingClientRect();
+    setPosition({
+      left: Math.max(margin, Math.min(menu.x, window.innerWidth - rect.width - margin)),
+      top: Math.max(margin, Math.min(menu.y, window.innerHeight - rect.height - margin))
+    });
+  }, [menu]);
+
   if (!menu) return null;
 
   const { x, y, mod, selectedProfile  } = menu;
@@ -353,10 +378,12 @@ function ContextMenu({
       />
 
       <div
+        ref={menuRef}
         style={{
           position: "fixed",
-          top: y,
-          left: x,
+          top: position ? position.top : y,
+          left: position ? position.left : x,
+          visibility: position ? "visible" : "hidden",
           background: "#2a2a2a",
           borderRadius: "8px",
           padding: "6px",
@@ -653,6 +680,29 @@ export default function App() {
   const [settingsForm, setSettingsForm] = useState({ gamePath: "", launchUrl: "" });
   // incremente pour forcer le rechargement complet (ex. apres changement du dossier du jeu)
   const [reloadToken, setReloadToken] = useState(0);
+  const [gameRunning, setGameRunning] = useState(false);
+
+  // FS25 lance : changement de profil bloque (le jeu l'ecraserait) et mods potentiellement verrouilles
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkGame() {
+      try {
+        const running = await window.fs25.isGameRunning();
+        if (!cancelled) setGameRunning(running);
+      } catch {}
+    }
+
+    checkGame();
+    const timer = setInterval(checkGame, GAME_RUNNING_POLL_INTERVAL);
+    window.addEventListener("focus", checkGame);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener("focus", checkGame);
+    };
+  }, []);
 
   const requestIdRef = useRef(0);
   // iconKey deja demandes (ou en cours) : evite les doublons entre profil et Default
@@ -775,7 +825,7 @@ export default function App() {
     if (filter !== "excluded") return;
 
     loadIcons(
-      defaultMods.filter((m) => excludedMods.includes(m.fileName)),
+      defaultMods.filter((m) => includesFileName(excludedMods, m.fileName)),
       requestIdRef.current
     );
   }, [filter, defaultMods, excludedMods]);
@@ -1267,8 +1317,8 @@ export default function App() {
     .filter((m) => m.status === "local")
     .reduce((sum, m) => sum + (m.size || 0), 0);
 
-  const presentInProfile = new Set(mods.map((m) => m.fileName));
-  const conflictingMods = mods.filter((m) => excludedMods.includes(m.fileName));
+  const presentInProfile = new Set(mods.map((m) => m.fileName.toLowerCase()));
+  const conflictingMods = mods.filter((m) => includesFileName(excludedMods, m.fileName));
   const outOfSyncFavorites = isDefaultProfile
     ? []
     : mods.filter((m) => m.status === "common-linked" && m.isOutOfSync);
@@ -1286,8 +1336,8 @@ export default function App() {
 
     if (filter === "excluded") {
       displayedMods = defaultMods
-        .filter((m) => excludedMods.includes(m.fileName))
-        .filter((m) => !presentInProfile.has(m.fileName))
+        .filter((m) => includesFileName(excludedMods, m.fileName))
+        .filter((m) => !presentInProfile.has(m.fileName.toLowerCase()))
         .map((m) => ({
           ...m,
           status: "common-excluded"
@@ -1345,6 +1395,14 @@ export default function App() {
             <div style={{ marginTop: "6px", opacity: 0.85 }}>
               Profil actif : <strong>{activeProfile}</strong>
             </div>
+            {gameRunning && (
+              <div
+                style={{ marginTop: "6px", fontSize: "13px", color: "#ffd28a" }}
+                title="Le jeu réécrit gameSettings.xml en quittant et verrouille les mods chargés"
+              >
+                🎮 FS25 est lancé : changement de profil désactivé, certaines opérations sur les mods peuvent échouer
+              </div>
+            )}
           </div>
 
           <div style={{ minWidth: "280px" }}>
@@ -1412,7 +1470,8 @@ export default function App() {
 		  >
 			<ActionButton
 			  onClick={handleChangeProfile}
-			  disabled={!hasPendingChange}
+			  disabled={!hasPendingChange || gameRunning}
+			  title={gameRunning ? "Ferme FS25 avant de changer de profil" : undefined}
 			>
 			  Changer de profil
 			</ActionButton>

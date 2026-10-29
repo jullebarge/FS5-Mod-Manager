@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('fs25', {
   openGithubRepo: (repoUrl) => ipcRenderer.invoke('fs25:openGithubRepo', repoUrl),
   updateGithubMod: (profile, fileName) => ipcRenderer.invoke('fs25:updateGithubMod', profile, fileName),
   launchGame: () => ipcRenderer.invoke("fs25:launchGame"),
+  isGameRunning: () => ipcRenderer.invoke("fs25:isGameRunning"),
   getSettings: () => ipcRenderer.invoke("fs25:getSettings"),
   saveSettings: (settings) => ipcRenderer.invoke("fs25:saveSettings", settings),
   pickGameFolder: () => ipcRenderer.invoke("fs25:pickGameFolder"),

@@ -257,6 +257,72 @@ function readDirectoryModIcon(fullPath, iconFile) {
     return fs.readFileSync(iconPath);
 }
 
+const MODS_OVERRIDE_PATTERN = /<modsDirectoryOverride\b[^>]*?(?:\/>|>\s*<\/modsDirectoryOverride>)/;
+const GAME_PROCESS_PREFIX = "farmingsimulator2025";
+const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
+function escapeXml(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
+function unescapeXml(value) {
+    return String(value)
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&amp;/g, "&");
+}
+
+function readXmlAttribute(tag, name) {
+    const match = tag.match(new RegExp(`\\b${name}="([^"]*)"`));
+    return match ? unescapeXml(match[1]) : null;
+}
+
+// Vrai si FS25 (lanceur ou jeu) tourne : le jeu reecrit gameSettings.xml en quittant
+// et verrouille les mods qu'il a charges.
+function isGameRunning() {
+    return new Promise((resolve) => {
+        execFile(
+            "tasklist",
+            ["/FO", "CSV", "/NH", "/FI", "IMAGENAME eq FarmingSimulator2025*"],
+            { windowsHide: true },
+            (error, stdout) => {
+                if (error) {
+                    resolve(false);
+                    return;
+                }
+
+                resolve(String(stdout)
+                    .split(/\r?\n/)
+                    .some((line) => line.replace(/^"/, "").toLowerCase().startsWith(GAME_PROCESS_PREFIX)));
+            });
+    });
+}
+
+function validateProfileName(name) {
+    if (!name) {
+        return "Nom de profil vide";
+    }
+    if (name.toLowerCase() === "default") {
+        return "« Default » est réservé aux mods favoris";
+    }
+    if (/[<>:"/\\|?*\x00-\x1f]/.test(name)) {
+        return "Le nom ne doit pas contenir < > : \" / \\ | ? *";
+    }
+    if (/^\.+$/.test(name) || /[. ]$/.test(name)) {
+        return "Le nom ne doit pas finir par un point ou un espace";
+    }
+    if (WINDOWS_RESERVED_NAMES.test(name)) {
+        return "Ce nom est réservé par Windows";
+    }
+    return null;
+}
+
 function getActiveProfileFromXML() {
     const gameSettingsPath = path.join(getBasePath(), "gameSettings.xml");
 
@@ -266,19 +332,18 @@ function getActiveProfileFromXML() {
 
     const xml = fs.readFileSync(gameSettingsPath, "utf-8");
 
-    const activeMatch = xml.match(/modsDirectoryOverride active="(true|false)"/);
+    // les attributs sont lus dans la balise elle-meme, quel que soit leur ordre
+    const tagMatch = xml.match(MODS_OVERRIDE_PATTERN);
 
-    if (!activeMatch || activeMatch[1] === "false") {
+    if (!tagMatch || readXmlAttribute(tagMatch[0], "active") !== "true") {
         return "Default";
     }
 
-    const dirMatch = xml.match(/directory="([^"]+)"/);
+    const fullPath = readXmlAttribute(tagMatch[0], "directory");
 
-    if (!dirMatch) {
+    if (!fullPath) {
         return "Default";
     }
-
-    const fullPath = dirMatch[1];
 
     // 🔥 récupère juste le nom du dossier
     const normalizedPath = fullPath.replace(/[\\/]+$/, '');
@@ -449,6 +514,10 @@ function parseGitHubRepoUrl(repoUrl) {
     };
 }
 
+// Delai sans activite reseau avant abandon, et nombre max de redirections suivies
+const HTTP_TIMEOUT = 30 * 1000;
+const MAX_REDIRECTS = 5;
+
 function githubRequestJson(url) {
     return new Promise((resolve, reject) => {
         const req = https.get(url, {
@@ -458,6 +527,8 @@ function githubRequestJson(url) {
             }
         }, (res) => {
             let data = "";
+
+            res.on("error", reject);
 
             res.on("data", (chunk) => {
                 data += chunk;
@@ -484,6 +555,10 @@ function githubRequestJson(url) {
                     reject(err);
                 }
             });
+        });
+
+        req.setTimeout(HTTP_TIMEOUT, () => {
+            req.destroy(new Error("GitHub ne répond pas (délai dépassé)"));
         });
 
         req.on("error", reject);
@@ -584,13 +659,18 @@ function getGithubRegistryPath() {
     return path.join(dir, "github-mods.json");
 }
 
+// Les appelants modifient le registre avant de l'ecrire : on leur donne une copie du cache
+function copyRegistry(data) {
+    return data.map((entry) => ({ ...entry }));
+}
+
 function readGithubRegistry() {
     if (Date.now() - registryCache.github.cachedAt < REGISTRY_CACHE_TTL && registryCache.github.data.length > 0) {
-        return registryCache.github.data;
+        return copyRegistry(registryCache.github.data);
     }
     const data = readJsonFile(getGithubRegistryPath(), []);
     registryCache.github = { data, cachedAt: Date.now() };
-    return data;
+    return copyRegistry(data);
 }
 
 function writeGithubRegistry(data) {
@@ -600,6 +680,11 @@ function writeGithubRegistry(data) {
 
 function sameFileName(a, b) {
     return String(a || "").toLowerCase() === String(b || "").toLowerCase();
+}
+
+// Windows ignore la casse des noms de fichiers : les listes (liens geres, exclusions) aussi
+function includesFileName(list, fileName) {
+    return list.some((item) => sameFileName(item, fileName));
 }
 
 // Message court pour l'utilisateur (les messages Node contiennent le chemin complet)
@@ -929,7 +1014,7 @@ function getTrackedEntriesForProfile(profile) {
     return registry.filter(
         (item) =>
             item.profile === profile ||
-            (item.profile === "Default" && managedLinks.includes(item.fileName))
+            (item.profile === "Default" && includesFileName(managedLinks, item.fileName))
     );
 }
 
@@ -941,11 +1026,11 @@ function getExternalRegistryPath() {
 
 function readExternalRegistry() {
     if (Date.now() - registryCache.external.cachedAt < REGISTRY_CACHE_TTL && registryCache.external.data.length > 0) {
-        return registryCache.external.data;
+        return copyRegistry(registryCache.external.data);
     }
     const data = readJsonFile(getExternalRegistryPath(), []);
     registryCache.external = { data, cachedAt: Date.now() };
-    return data;
+    return copyRegistry(data);
 }
 
 function writeExternalRegistry(data) {
@@ -1028,9 +1113,19 @@ function copyLocalZipToProfile(sourceZipPath, destinationPath) {
     fs.copyFileSync(sourceZipPath, destinationPath);
 }
 
-function downloadFile(url, destinationPath) {
+function downloadFile(url, destinationPath, redirectsLeft = MAX_REDIRECTS) {
     return new Promise((resolve, reject) => {
         const tempPath = destinationPath + ".download";
+        let fileStream = null;
+
+        // interruption reseau ou delai depasse : on ferme le fichier partiel avant de le supprimer
+        function fail(err) {
+            if (fileStream) {
+                fileStream.destroy();
+            }
+            fs.rm(tempPath, { force: true }, () => {});
+            reject(err);
+        }
 
         const request = https.get(url, {
             headers: {
@@ -1046,19 +1141,27 @@ function downloadFile(url, destinationPath) {
                 response.headers.location
             ) {
                 response.resume();
-                downloadFile(response.headers.location, destinationPath)
+
+                if (redirectsLeft <= 0) {
+                    reject(new Error("Echec du telechargement (trop de redirections)"));
+                    return;
+                }
+
+                downloadFile(response.headers.location, destinationPath, redirectsLeft - 1)
                     .then(resolve)
                     .catch(reject);
                 return;
             }
 
             if (!response.statusCode || response.statusCode >= 400) {
+                response.resume();
                 reject(new Error(`Echec du telechargement (${response.statusCode || "?"})`));
                 return;
             }
 
-            const fileStream = fs.createWriteStream(tempPath);
+            fileStream = fs.createWriteStream(tempPath);
 
+            response.on("error", fail);
             response.pipe(fileStream);
 
             fileStream.on("finish", () => {
@@ -1096,12 +1199,11 @@ function downloadFile(url, destinationPath) {
             });
         });
 
-        request.on("error", (err) => {
-            try {
-                fs.rmSync(tempPath, { force: true });
-            } catch {}
-            reject(err);
+        request.setTimeout(HTTP_TIMEOUT, () => {
+            request.destroy(new Error("Le téléchargement ne répond plus (délai dépassé)"));
         });
+
+        request.on("error", fail);
     });
 }
 
@@ -1139,20 +1241,37 @@ app.whenReady().then(() => {
 
     ipcMain.handle('fs25:setActiveProfile', async(_event, profileName) => {
         try {
+            if (await isGameRunning()) {
+                return {
+                    success: false,
+                    error: "FS25 est lancé : il écraserait ce changement en quittant. Ferme le jeu puis réessaie."
+                };
+            }
+
             const xmlPath = path.join(getBasePath(), "gameSettings.xml");
             let content = fs.readFileSync(xmlPath, 'utf-8');
 
-            if (profileName === "Default") {
-                content = content.replace(
-                        /<modsDirectoryOverride\s+active="[^"]*"\s+directory="[^"]*"\s*\/>/,
-                        '<modsDirectoryOverride active="false" directory="" />');
-            } else {
-                const profilePath = path.join(getModsCartesPath(), profileName).replace(/\\/g, "/");
-
-                content = content.replace(
-                        /<modsDirectoryOverride\s+active="[^"]*"\s+directory="[^"]*"\s*\/>/,
-`<modsDirectoryOverride active="true" directory="${profilePath}" />`);
+            if (!MODS_OVERRIDE_PATTERN.test(content)) {
+                return {
+                    success: false,
+                    error: "Balise <modsDirectoryOverride> introuvable dans gameSettings.xml"
+                };
             }
+
+            let newTag = '<modsDirectoryOverride active="false" directory="" />';
+
+            if (profileName !== "Default") {
+                const profileDir = path.join(getModsCartesPath(), profileName);
+
+                if (!fs.existsSync(profileDir)) {
+                    return { success: false, error: "Dossier du profil introuvable" };
+                }
+
+                const profilePath = profileDir.replace(/\\/g, "/");
+                newTag = `<modsDirectoryOverride active="true" directory="${escapeXml(profilePath)}" />`;
+            }
+
+            content = content.replace(MODS_OVERRIDE_PATTERN, newTag);
 
             fs.writeFileSync(xmlPath, content, 'utf-8');
             return {
@@ -1170,11 +1289,12 @@ app.whenReady().then(() => {
     ipcMain.handle('fs25:createProfile', async(_event, profileName) => {
         try {
             const cleanName = (profileName || "").trim();
+            const nameError = validateProfileName(cleanName);
 
-            if (!cleanName) {
+            if (nameError) {
                 return {
                     success: false,
-                    error: "Nom de profil vide"
+                    error: nameError
                 };
             }
 
@@ -1187,7 +1307,7 @@ app.whenReady().then(() => {
                 };
             }
 
-            fs.mkdirSync(newPath);
+            fs.mkdirSync(newPath, { recursive: true });
             return {
                 success: true
             };
@@ -1394,10 +1514,10 @@ app.whenReady().then(() => {
             const iconFilename = modInfo.iconFilename || null;
 
             const isManagedCommon =
-              profile !== "Default" && managedLinks.includes(file);
+              profile !== "Default" && includesFileName(managedLinks, file);
 
             const isExcluded =
-              profile !== "Default" && excludedMods.includes(file);
+              profile !== "Default" && includesFileName(excludedMods, file);
 
             let status = "local";
 
@@ -1540,7 +1660,7 @@ app.whenReady().then(() => {
 
 		const defaultEntries = fs.readdirSync(defaultDir)
 		  .filter((file) => file.toLowerCase().endsWith(".zip"));
-		const wanted = defaultEntries.filter((file) => !excludedMods.includes(file));
+		const wanted = defaultEntries.filter((file) => !includesFileName(excludedMods, file));
 		const skippedExcluded = defaultEntries.length - wanted.length;
 
 		// Chaque fichier est traite independamment : une erreur (mod verrouille par le jeu...)
@@ -1700,17 +1820,17 @@ app.whenReady().then(() => {
 		let excludedMods = readExcludedModsFromProfile(profile);
 		let managedLinks = readManagedLinks(profile);
 
-		const isExcluded = excludedMods.includes(fileName);
+		const isExcluded = includesFileName(excludedMods, fileName);
 
 		if (!isExcluded) {
-		  excludedMods.push(fileName);
-		  excludedMods = [...new Set(excludedMods)];
+		  // copie : le tableau lu vient du cache et ne doit pas etre modifie avant l'ecriture
+		  excludedMods = [...excludedMods, fileName];
 
-		  if (managedLinks.includes(fileName) && fs.existsSync(targetPath)) {
+		  if (includesFileName(managedLinks, fileName) && fs.existsSync(targetPath)) {
 			fs.rmSync(targetPath, { force: true });
 		  }
 
-		  managedLinks = managedLinks.filter((m) => m !== fileName);
+		  managedLinks = managedLinks.filter((m) => !sameFileName(m, fileName));
 
 		  writeExcludedModsToProfile(profile, excludedMods);
 		  writeManagedLinks(profile, managedLinks);
@@ -1720,7 +1840,7 @@ app.whenReady().then(() => {
 			excluded: true
 		  };
 		} else {
-		  excludedMods = excludedMods.filter((m) => m !== fileName);
+		  excludedMods = excludedMods.filter((m) => !sameFileName(m, fileName));
 
 		  if (!fs.existsSync(sourcePath)) {
 			return { success: false, error: "Mod favori introuvable dans Default" };
@@ -1731,7 +1851,7 @@ app.whenReady().then(() => {
 			fs.linkSync(sourcePath, targetPath);
 		  }
 
-if (!managedLinks.includes(fileName)) {
+		if (!includesFileName(managedLinks, fileName)) {
 			managedLinks.push(fileName);
 		}
 
@@ -1779,7 +1899,7 @@ if (!managedLinks.includes(fileName)) {
 
 		// 3. enregistrer dans managed_links
 		let managed = readManagedLinks(profile);
-		if (!managed.includes(fileName)) {
+		if (!includesFileName(managed, fileName)) {
 		  managed.push(fileName);
 		  writeManagedLinks(profile, managed);
 		}
@@ -2041,6 +2161,10 @@ if (!managedLinks.includes(fileName)) {
             console.error("Erreur relinkFavorite:", err);
             return { success: false, error: describeFsError(err) };
         }
+    });
+
+    ipcMain.handle("fs25:isGameRunning", async () => {
+        return await isGameRunning();
     });
 
     ipcMain.handle("fs25:getSettings", async () => {
