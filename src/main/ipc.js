@@ -34,6 +34,7 @@ const {
     relinkFavorite
 } = require('./links');
 const { getSavegameOverview, setSavegameProfile, analyzeSavegame } = require('./savegames');
+const { getIconCacheStats, cleanIconCache } = require('./iconCleanup');
 
 const failure = (err) => ({ success: false, error: err.message });
 
@@ -97,6 +98,9 @@ function registerIpcHandlers() {
     }, "folderPath"), { label: "pickGameFolder" });
 
     handle("fs25:isGameRunning", isGameRunning);
+
+    handle("fs25:getIconCacheStats", getIconCacheStats, { label: "getIconCacheStats" });
+    handle("fs25:cleanIconCache", () => cleanIconCache({ ignoreGracePeriod: true }), { label: "cleanIconCache" });
 
     handle("fs25:launchGame", async () => {
         const url = String(loadSettings().launchUrl || "").trim();

@@ -34,6 +34,8 @@ contextBridge.exposeInMainWorld('fs25', {
   updateGithubMod: (profile, fileName) => ipcRenderer.invoke('fs25:updateGithubMod', profile, fileName),
   launchGame: () => ipcRenderer.invoke("fs25:launchGame"),
   isGameRunning: () => ipcRenderer.invoke("fs25:isGameRunning"),
+  getIconCacheStats: () => ipcRenderer.invoke("fs25:getIconCacheStats"),
+  cleanIconCache: () => ipcRenderer.invoke("fs25:cleanIconCache"),
   getSettings: () => ipcRenderer.invoke("fs25:getSettings"),
   saveSettings: (settings) => ipcRenderer.invoke("fs25:saveSettings", settings),
   pickGameFolder: () => ipcRenderer.invoke("fs25:pickGameFolder"),

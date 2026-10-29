@@ -220,6 +220,7 @@ async function getModIcon(mod) {
 }
 
 module.exports = {
+    getIconCacheDir,
     registerIconScheme,
     registerIconProtocol,
     makeIconKey,

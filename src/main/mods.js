@@ -295,6 +295,7 @@ async function deleteMod(profile, fileName, options = {}) {
 }
 
 module.exports = {
+    listModFiles,
     getMods,
     getExcludedMods,
     addExternalMod,

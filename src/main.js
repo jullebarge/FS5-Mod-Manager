@@ -4,6 +4,7 @@ const fs = require('fs');
 const { registerIpcHandlers } = require('./main/ipc');
 const { flushModInfoCache } = require('./main/modInfo');
 const { registerIconScheme, registerIconProtocol } = require('./main/icons');
+const { scheduleIconCacheCleanup } = require('./main/iconCleanup');
 
 registerIconScheme();
 
@@ -35,6 +36,7 @@ app.whenReady().then(() => {
     registerIconProtocol();
     registerIpcHandlers();
     createWindow();
+    scheduleIconCacheCleanup();
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {
